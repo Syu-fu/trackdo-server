@@ -71,7 +71,7 @@ impl ApiError {
         Self::new(
             StatusCode::BAD_REQUEST,
             ErrorCode::InvalidLastEventId,
-            "Last-Event-ID must be a seq",
+            "Last-Event-ID must be `<log_id>:<seq>`",
         )
     }
 

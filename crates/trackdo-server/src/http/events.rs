@@ -12,7 +12,8 @@ use futures_util::stream;
 use futures_util::{Stream, StreamExt};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use trackdo_core::op::{Op, Seq};
+use trackdo_core::op::{LogId, Op, Seq};
+use trackdo_protocol::event::EventId;
 use trackdo_protocol::op::OpDto;
 
 use super::{ApiError, AppState, LAST_EVENT_ID, Session};
@@ -29,7 +30,7 @@ pub(super) fn routes() -> Router<AppState> {
 }
 
 /// Streams every op after `Last-Event-ID` (from the start without it), then
-/// each op stored afterwards.
+/// each op stored afterwards. Event ids are `<log_id>:<seq>`.
 ///
 /// A position the log cannot resume from is refused before streaming, so the
 /// client resyncs from `GET /snapshot` instead of silently missing ops.
@@ -38,13 +39,15 @@ async fn get_events(
     State(store): State<Store>,
     State(notifier): State<Notifier>,
     State(closing): State<CancellationToken>,
+    State(log_id): State<LogId>,
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, ApiError> {
-    let after = last_event_id(&headers)?;
-    check_resumable(&store, session.user, after).await?;
+    let last = last_event_id(&headers)?;
+    let after = resume_after(&store, session.user, log_id, last).await?;
     let cursor = Cursor {
         store,
         user: session.user,
+        log_id,
         after,
         page: VecDeque::new(),
         changes: notifier.subscribe(session.user),
@@ -53,7 +56,7 @@ async fn get_events(
     Ok(Sse::new(events).keep_alive(KeepAlive::new().interval(KEEPALIVE).text("keepalive")))
 }
 
-fn last_event_id(headers: &HeaderMap) -> Result<Option<Seq>, ApiError> {
+fn last_event_id(headers: &HeaderMap) -> Result<Option<EventId>, ApiError> {
     headers
         .get(LAST_EVENT_ID)
         .map(|value| {
@@ -61,20 +64,33 @@ fn last_event_id(headers: &HeaderMap) -> Result<Option<Seq>, ApiError> {
                 .to_str()
                 .ok()
                 .and_then(|id| id.parse().ok())
-                .map(Seq)
                 .ok_or_else(ApiError::invalid_last_event_id)
         })
         .transpose()
 }
 
-/// Positions ahead of the log mean the server lost ops the client has seen.
-async fn check_resumable(store: &Store, user: UserId, after: Option<Seq>) -> Result<(), ApiError> {
-    let Some(Seq(after)) = after else {
-        return Ok(());
+/// The seq to stream after, if `last` is a position in this log.
+///
+/// Another log id means the log was replaced since, e.g. restored from a
+/// backup; a seq ahead of the log means it lost ops the client has seen.
+async fn resume_after(
+    store: &Store,
+    user: UserId,
+    log_id: LogId,
+    last: Option<EventId>,
+) -> Result<Option<Seq>, ApiError> {
+    let Some(last) = last else {
+        return Ok(None);
     };
+    if last.log_id != log_id {
+        return Err(ApiError::resync_required(
+            "the log was replaced; fetch GET /snapshot",
+        ));
+    }
+    let Seq(after) = last.seq;
     let head = store.head(user).await?.map_or(0, |Seq(seq)| seq);
     if after <= head {
-        Ok(())
+        Ok(Some(last.seq))
     } else {
         Err(ApiError::resync_required(format!(
             "the log ends at seq {head}, before {after}; fetch GET /snapshot"
@@ -87,6 +103,7 @@ async fn check_resumable(store: &Store, user: UserId, after: Option<Seq>) -> Res
 struct Cursor {
     store: Store,
     user: UserId,
+    log_id: LogId,
     after: Option<Seq>,
     page: VecDeque<(Seq, Op)>,
     changes: watch::Receiver<()>,
@@ -97,7 +114,7 @@ impl Cursor {
         loop {
             if let Some((seq, op)) = self.page.pop_front() {
                 self.after = Some(seq);
-                return Some((op_event(seq, &op), self));
+                return Some((op_event(self.log_id, seq, &op), self));
             }
             // Marking the signal seen before reading means anything stored
             // after the read wakes the wait below.
@@ -114,9 +131,9 @@ impl Cursor {
     }
 }
 
-fn op_event(Seq(seq): Seq, op: &Op) -> Result<Event, axum::Error> {
+fn op_event(log_id: LogId, seq: Seq, op: &Op) -> Result<Event, axum::Error> {
     Event::default()
-        .id(seq.to_string())
+        .id(EventId { log_id, seq }.to_string())
         .event("op")
         .json_data(OpDto::from(op))
 }

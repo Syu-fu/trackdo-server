@@ -17,7 +17,7 @@ use trackdo_core::title::Title;
 use trackdo_protocol::op::OpDto;
 use trackdo_server::store::UserId;
 
-use common::{app, app_closed_by, authorized, send};
+use common::{LOG_UUID, app, app_closed_by, authorized, send};
 
 /// Fails a test whose event never comes instead of hanging it.
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -127,9 +127,14 @@ fn parse(block: &str) -> Option<Event> {
     })
 }
 
+/// The event id of `seq` in the log the test app serves.
+fn at(seq: u64) -> String {
+    format!("{LOG_UUID}:{seq}")
+}
+
 fn event(seq: u64, op: &Op) -> Event {
     Event {
-        id: seq.to_string(),
+        id: at(seq),
         event: "op".to_owned(),
         data: wire(op),
     }
@@ -173,7 +178,7 @@ async fn resumes_after_the_last_event_id() {
     let ops = [rename(1), rename(2), rename(3)];
     store.append(UserId::DEFAULT, &ops).await.unwrap();
 
-    let mut events = Events::open(&app, Some("2")).await;
+    let mut events = Events::open(&app, Some(&at(2))).await;
 
     assert_eq!(events.next().await, event(3, &ops[2]));
     events.assert_quiet().await;
@@ -264,7 +269,7 @@ async fn asks_to_resync_when_ahead_of_the_log() {
         .await
         .unwrap();
 
-    let reply = open_after(&app, "3").await;
+    let reply = open_after(&app, &at(3)).await;
 
     assert_eq!(reply.status, StatusCode::GONE);
     assert_eq!(reply.error_code(), json!("resync_required"));
@@ -274,7 +279,7 @@ async fn asks_to_resync_when_ahead_of_the_log() {
 async fn asks_to_resync_when_the_log_is_empty() {
     let (app, _) = app().await;
 
-    let reply = open_after(&app, "1").await;
+    let reply = open_after(&app, &at(1)).await;
 
     assert_eq!(reply.status, StatusCode::GONE);
     assert_eq!(reply.error_code(), json!("resync_required"));
@@ -284,7 +289,7 @@ async fn asks_to_resync_when_the_log_is_empty() {
 async fn streams_when_caught_up_with_the_log() {
     let (app, store) = app().await;
     store.append(UserId::DEFAULT, &[rename(1)]).await.unwrap();
-    let mut events = Events::open(&app, Some("1")).await;
+    let mut events = Events::open(&app, Some(&at(1))).await;
     events.assert_quiet().await;
 
     post(&app, &[rename(2)]).await;
@@ -296,7 +301,7 @@ async fn streams_when_caught_up_with_the_log() {
 async fn streams_from_zero_on_an_empty_log() {
     let (app, _) = app().await;
 
-    let mut events = Events::open(&app, Some("0")).await;
+    let mut events = Events::open(&app, Some(&at(0))).await;
 
     events.assert_quiet().await;
 }
@@ -311,4 +316,28 @@ async fn ends_streams_when_closing() {
     closing.cancel();
 
     events.assert_ended().await;
+}
+
+#[tokio::test]
+async fn asks_to_resync_from_another_log() {
+    let (app, store) = app().await;
+    store
+        .append(UserId::DEFAULT, &[rename(1), rename(2)])
+        .await
+        .unwrap();
+
+    let reply = open_after(&app, "01928f30-0000-7000-8000-0000000000ff:1").await;
+
+    assert_eq!(reply.status, StatusCode::GONE);
+    assert_eq!(reply.error_code(), json!("resync_required"));
+}
+
+#[tokio::test]
+async fn rejects_a_bare_seq_as_last_event_id() {
+    let (app, _) = app().await;
+
+    let reply = open_after(&app, "1").await;
+
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST);
+    assert_eq!(reply.error_code(), json!("invalid_last_event_id"));
 }
