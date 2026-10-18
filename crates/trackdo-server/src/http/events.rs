@@ -8,9 +8,10 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
-use futures_util::Stream;
 use futures_util::stream;
+use futures_util::{Stream, StreamExt};
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use trackdo_core::op::{Op, Seq};
 use trackdo_protocol::op::OpDto;
 
@@ -36,6 +37,7 @@ async fn get_events(
     session: Session,
     State(store): State<Store>,
     State(notifier): State<Notifier>,
+    State(closing): State<CancellationToken>,
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, ApiError> {
     let after = last_event_id(&headers)?;
@@ -47,7 +49,7 @@ async fn get_events(
         page: VecDeque::new(),
         changes: notifier.subscribe(session.user),
     };
-    let events = stream::unfold(cursor, Cursor::next);
+    let events = stream::unfold(cursor, Cursor::next).take_until(closing.cancelled_owned());
     Ok(Sse::new(events).keep_alive(KeepAlive::new().interval(KEEPALIVE).text("keepalive")))
 }
 

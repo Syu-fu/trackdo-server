@@ -17,7 +17,7 @@ use trackdo_core::title::Title;
 use trackdo_protocol::op::OpDto;
 use trackdo_server::store::UserId;
 
-use common::{app, authorized, send};
+use common::{app, app_closed_by, authorized, send};
 
 /// Fails a test whose event never comes instead of hanging it.
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -75,6 +75,18 @@ impl Events {
         timeout(DEADLINE, self.read_event())
             .await
             .expect("no event in time")
+    }
+
+    async fn assert_ended(&mut self) {
+        loop {
+            match timeout(DEADLINE, self.body.frame())
+                .await
+                .expect("stream still open")
+            {
+                None => return,
+                Some(frame) => assert!(frame.unwrap().into_data().is_ok()),
+            }
+        }
     }
 
     async fn assert_quiet(&mut self) {
@@ -287,4 +299,16 @@ async fn streams_from_zero_on_an_empty_log() {
     let mut events = Events::open(&app, Some("0")).await;
 
     events.assert_quiet().await;
+}
+
+#[tokio::test]
+async fn ends_streams_when_closing() {
+    let closing = tokio_util::sync::CancellationToken::new();
+    let (app, _) = app_closed_by(closing.clone()).await;
+    let mut events = Events::open(&app, None).await;
+    events.assert_quiet().await;
+
+    closing.cancel();
+
+    events.assert_ended().await;
 }

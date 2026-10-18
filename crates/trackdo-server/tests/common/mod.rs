@@ -9,6 +9,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode};
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
 use trackdo_server::auth::{TokenDigest, Tokens};
@@ -20,11 +21,17 @@ pub const TOKEN: &str = "secret";
 
 /// The router over a fresh in-memory store, which tests may inspect.
 pub async fn app() -> (Router, Store) {
+    app_closed_by(CancellationToken::new()).await
+}
+
+/// Like [`app`], with event streams ending when `closing` is cancelled.
+pub async fn app_closed_by(closing: CancellationToken) -> (Router, Store) {
     let store = Store::in_memory().await.unwrap();
     let app = router(AppState {
         tokens: Arc::new(Tokens::new(vec![TokenDigest::of(TOKEN)])),
         store: store.clone(),
         notifier: Notifier::default(),
+        closing,
     });
     (app, store)
 }

@@ -9,6 +9,17 @@ resolution stays on the clients.
 
 See [docs/design.md](docs/design.md) for the API, storage and deployment.
 
+## Running
+
+```sh
+TOKEN=$(openssl rand -base64 32)          # give this to the apps
+export TRACKDO_TOKEN_HASHES=$(printf %s "$TOKEN" | shasum -a 256 | cut -d' ' -f1)
+cargo run --release
+```
+
+Other settings (listen address, database path, log filter) are listed in
+[docs/design.md](docs/design.md#deployment-and-configuration).
+
 ## Development
 
 Requires the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml).

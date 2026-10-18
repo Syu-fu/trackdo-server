@@ -4,8 +4,10 @@
 //! `trackdo-protocol`. Conflict resolution stays on the clients.
 
 pub mod auth;
+pub mod config;
 pub mod http;
 pub mod notify;
+pub mod server;
 pub mod snapshot;
 pub mod store;
 
