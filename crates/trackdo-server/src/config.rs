@@ -3,6 +3,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use axum::http::{HeaderValue, Uri};
 use thiserror::Error;
 
 use crate::auth::TokenDigest;
@@ -15,6 +16,8 @@ pub struct Config {
     pub listen: SocketAddr,
     pub database: PathBuf,
     pub tokens: Vec<TokenDigest>,
+    /// Web origins allowed to call the API from a browser.
+    pub cors_origins: Vec<HeaderValue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -26,6 +29,8 @@ pub enum ConfigError {
     /// Counted from 1, so the digest itself never reaches the log.
     #[error("TRACKDO_TOKEN_HASHES entry {0} is not a hex SHA-256 digest")]
     InvalidTokenDigest(usize),
+    #[error("TRACKDO_CORS_ORIGINS entry is not an origin like https://app.example: {0:?}")]
+    InvalidCorsOrigin(String),
 }
 
 impl Config {
@@ -48,8 +53,28 @@ impl Config {
             database: var("TRACKDO_DATABASE")
                 .map_or_else(|| PathBuf::from(DEFAULT_DATABASE), PathBuf::from),
             tokens,
+            cors_origins: list(var("TRACKDO_CORS_ORIGINS").as_deref())
+                .map(origin)
+                .collect::<Result<_, _>>()?,
         })
     }
+}
+
+/// An `http(s)://host[:port]` origin, exactly as browsers send it.
+fn origin(entry: &str) -> Result<HeaderValue, ConfigError> {
+    let invalid = || ConfigError::InvalidCorsOrigin(entry.to_owned());
+    let uri: Uri = entry.parse().map_err(|_| invalid())?;
+    let scheme = uri
+        .scheme_str()
+        .filter(|scheme| matches!(*scheme, "http" | "https"))
+        .ok_or_else(invalid)?;
+    let authority = uri.authority().ok_or_else(invalid)?;
+    // Anything beyond scheme and authority, even a trailing slash, would
+    // never match the Origin header.
+    if format!("{scheme}://{authority}") != entry {
+        return Err(invalid());
+    }
+    HeaderValue::from_str(entry).map_err(|_| invalid())
 }
 
 /// Comma-separated entries, trimmed, with empty ones dropped.
@@ -92,6 +117,7 @@ mod tests {
                 listen: "127.0.0.1:8080".parse().unwrap(),
                 database: PathBuf::from("trackdo.db"),
                 tokens: vec![digest(DIGEST)],
+                cors_origins: Vec::new(),
             }
         );
     }
@@ -102,12 +128,43 @@ mod tests {
             ("TRACKDO_LISTEN", "0.0.0.0:9000"),
             ("TRACKDO_DATABASE", "/data/trackdo.db"),
             ("TRACKDO_TOKEN_HASHES", &format!("{DIGEST},{OTHER}")),
+            (
+                "TRACKDO_CORS_ORIGINS",
+                "https://app.example, http://localhost:5173",
+            ),
         ])
         .unwrap();
 
         assert_eq!(config.listen, "0.0.0.0:9000".parse().unwrap());
         assert_eq!(config.database, PathBuf::from("/data/trackdo.db"));
         assert_eq!(config.tokens, [digest(DIGEST), digest(OTHER)]);
+        assert_eq!(
+            config.cors_origins,
+            ["https://app.example", "http://localhost:5173"]
+        );
+    }
+
+    #[test]
+    fn rejects_anything_but_an_origin() {
+        for entry in [
+            "app.example",
+            "https://app.example/",
+            "https://app.example/path",
+            "ftp://app.example",
+            "https://",
+            "https://app.example?query",
+        ] {
+            let result = config(&[
+                ("TRACKDO_TOKEN_HASHES", DIGEST),
+                ("TRACKDO_CORS_ORIGINS", entry),
+            ]);
+
+            assert_eq!(
+                result,
+                Err(ConfigError::InvalidCorsOrigin(entry.to_owned())),
+                "{entry}"
+            );
+        }
     }
 
     #[test]

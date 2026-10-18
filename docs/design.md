@@ -156,7 +156,7 @@ the hosting platform is not decided yet.
 | `TRACKDO_LISTEN` | `127.0.0.1:8080` | Listen address (`0.0.0.0:8080` in containers) |
 | `TRACKDO_DATABASE` | `trackdo.db` | SQLite file, created if missing |
 | `TRACKDO_TOKEN_HASHES` | required | Comma-separated SHA-256 hex digests; startup fails if empty |
-| `TRACKDO_CORS_ORIGINS` | empty (no CORS) | Comma-separated origins allowed for web clients |
+| `TRACKDO_CORS_ORIGINS` | empty (no CORS) | Comma-separated origins allowed for web clients, exactly as browsers send them (`https://app.example`, no path) |
 | `RUST_LOG` | `info` | Log filter |
 
 Generate a token and its digest with:

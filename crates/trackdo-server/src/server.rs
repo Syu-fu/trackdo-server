@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::auth::Tokens;
 use crate::config::Config;
-use crate::http::{AppState, router};
+use crate::http::{AppState, router, with_cors};
 use crate::notify::Notifier;
 use crate::store::{Store, StoreError};
 
@@ -37,7 +37,7 @@ pub async fn serve(
     };
     // Event streams never end on their own, so graceful shutdown would wait
     // forever without closing them first.
-    axum::serve(listener, router(state))
+    axum::serve(listener, with_cors(router(state), &config.cors_origins))
         .with_graceful_shutdown(async move {
             shutdown.await;
             closing.cancel();

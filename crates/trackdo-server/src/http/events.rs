@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use trackdo_core::op::{Op, Seq};
 use trackdo_protocol::op::OpDto;
 
-use super::{ApiError, AppState, Session};
+use super::{ApiError, AppState, LAST_EVENT_ID, Session};
 use crate::notify::Notifier;
 use crate::store::{Store, UserId};
 
@@ -55,7 +55,7 @@ async fn get_events(
 
 fn last_event_id(headers: &HeaderMap) -> Result<Option<Seq>, ApiError> {
     headers
-        .get("last-event-id")
+        .get(LAST_EVENT_ID)
         .map(|value| {
             value
                 .to_str()

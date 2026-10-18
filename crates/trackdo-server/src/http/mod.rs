@@ -16,17 +16,21 @@ use crate::auth::Tokens;
 use crate::notify::Notifier;
 use crate::store::Store;
 
+mod cors;
 mod error;
 mod events;
 mod ops;
 mod session;
 mod snapshot;
 
+pub use self::cors::with_cors;
 pub use self::error::ApiError;
 pub use self::session::Session;
 
 /// Carries `PROTOCOL_VERSION` on requests and responses.
 pub const PROTOCOL_HEADER: HeaderName = HeaderName::from_static("trackdo-protocol");
+/// Where `GET /events` resumes.
+const LAST_EVENT_ID: HeaderName = HeaderName::from_static("last-event-id");
 
 #[derive(Debug, Clone)]
 pub struct AppState {

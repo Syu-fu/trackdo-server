@@ -46,6 +46,7 @@ async fn start(database: PathBuf) -> Running {
         listen: "127.0.0.1:0".parse().unwrap(),
         database,
         tokens: vec![TokenDigest::of("secret")],
+        cors_origins: Vec::new(),
     };
     let listener = TcpListener::bind(config.listen).await.unwrap();
     let addr = listener.local_addr().unwrap();
