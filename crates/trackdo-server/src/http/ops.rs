@@ -11,6 +11,7 @@ use trackdo_protocol::op::OpDto;
 use uuid::Uuid;
 
 use super::{ApiError, AppState, Session};
+use crate::notify::Notifier;
 use crate::store::Store;
 
 /// Most ops accepted in one request.
@@ -34,6 +35,7 @@ struct Accepted {
 async fn post_ops(
     session: Session,
     State(store): State<Store>,
+    State(notifier): State<Notifier>,
     body: Result<Json<Vec<OpDto>>, JsonRejection>,
 ) -> Result<Json<Accepted>, ApiError> {
     let Json(dtos) = body.map_err(rejected_body)?;
@@ -48,6 +50,9 @@ async fn post_ops(
         .map(decode)
         .collect::<Result<Vec<_>, _>>()?;
     let accepted = store.append(session.user, &ops).await?;
+    if !ops.is_empty() {
+        notifier.notify(session.user);
+    }
     Ok(Json(Accepted {
         accepted: accepted
             .into_iter()

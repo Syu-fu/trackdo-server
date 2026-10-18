@@ -14,6 +14,7 @@ use crate::store::StoreError;
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     InvalidJson,
+    InvalidLastEventId,
     UnsupportedProtocolVersion,
     Unauthorized,
     TaskMismatch,
@@ -63,6 +64,14 @@ impl ApiError {
 
     pub fn invalid_json(message: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, ErrorCode::InvalidJson, message)
+    }
+
+    pub fn invalid_last_event_id() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidLastEventId,
+            "Last-Event-ID must be a seq",
+        )
     }
 
     pub fn too_large(message: impl Into<String>) -> Self {

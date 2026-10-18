@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod http;
+pub mod notify;
 pub mod snapshot;
 pub mod store;
 

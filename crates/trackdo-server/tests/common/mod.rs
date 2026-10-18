@@ -13,6 +13,7 @@ use tower::ServiceExt;
 
 use trackdo_server::auth::{TokenDigest, Tokens};
 use trackdo_server::http::{AppState, router};
+use trackdo_server::notify::Notifier;
 use trackdo_server::store::Store;
 
 pub const TOKEN: &str = "secret";
@@ -23,6 +24,7 @@ pub async fn app() -> (Router, Store) {
     let app = router(AppState {
         tokens: Arc::new(Tokens::new(vec![TokenDigest::of(TOKEN)])),
         store: store.clone(),
+        notifier: Notifier::default(),
     });
     (app, store)
 }

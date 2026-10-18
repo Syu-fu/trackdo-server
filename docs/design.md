@@ -43,6 +43,7 @@ The wire format is `trackdo-protocol` v0.2.0 (`PROTOCOL_VERSION = 2`).
 | Status | Code | When |
 |---|---|---|
 | 400 | `invalid_json` | Body is not a JSON array of `OpDto`, or not sent as `application/json` |
+| 400 | `invalid_last_event_id` | `Last-Event-ID` is not a seq |
 | 400 | `unsupported_protocol_version` | `Trackdo-Protocol` missing or different |
 | 401 | `unauthorized` | Token missing or unknown (with `WWW-Authenticate: Bearer`) |
 | 409 | `task_mismatch` | A time entry op names a different task than the entry's first stored op |
@@ -77,7 +78,7 @@ Server-sent events of every op after a position, in `seq` order.
   of the log.
 - One event per op: `id: <seq>`, `event: op`, `data: <OpDto JSON>`. Clients
   pass each to `Replica::apply_remote(&op, seq)`; duplicates are harmless.
-- A `: keepalive` comment is sent every 15 seconds. No `retry:` field is sent;
+- A `:keepalive` comment line is sent every 15 seconds. No `retry:` field is sent;
   reconnecting with backoff is the client's job.
 - When the stream cannot resume, the server answers `410 resync_required`
   before streaming. The client then fetches `GET /snapshot`, applies it, and
