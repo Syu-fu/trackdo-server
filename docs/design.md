@@ -6,7 +6,7 @@ the clients through [trackdo-core](https://github.com/Syu-fu/trackdo-core).
 The server never holds a `Replica`; replaying the log to build a snapshot is
 its only use of domain logic (`Task::apply` / `TimeEntry::apply`).
 
-The wire format is `trackdo-protocol` v0.2.0 (`PROTOCOL_VERSION = 2`).
+The wire format is `trackdo-protocol` v0.3.0 (`PROTOCOL_VERSION = 3`).
 
 ## Authentication
 
@@ -23,12 +23,31 @@ The wire format is `trackdo-protocol` v0.2.0 (`PROTOCOL_VERSION = 2`).
 
 ## Protocol version
 
-- Authenticated requests must send `Trackdo-Protocol: 2`. A missing or
+- Authenticated requests must send `Trackdo-Protocol: 3`. A missing or
   different value is rejected with `400 unsupported_protocol_version`.
   Authentication is checked first.
-- Every response carries `Trackdo-Protocol: 2`, so a client can tell whether
+- Every response carries `Trackdo-Protocol: 3`, so a client can tell whether
   the app or the server needs updating.
 - Only an exact match is accepted.
+
+## Log identity
+
+Each user's op log is served under a `log_id` (a UUID), which `GET /snapshot`
+returns and every event id carries. Clients resume `GET /events` only within
+the log they know; a position in another log is refused, so they resync.
+
+- **A new random `log_id` at every server start.** It is not stored: restoring
+  a backup restores the database, so a stored id would come back with the old
+  log and the rollback would go unnoticed. Restoring always means a restart,
+  so it is always caught without operator action.
+- The id stays the same for the life of a process, so a snapshot and the
+  events after it always agree. One id serves every user's log, since ids are
+  only compared within one user's stream.
+- **Cost:** after every restart each client fetches one snapshot. A replica
+  re-sends nothing unless the log actually lost writes; if it did, the replica
+  queues the missing writes again with their original HLCs
+  (`Replica::apply_snapshot`, trackdo-core v0.3.0), and the server stores them
+  like any other ops.
 
 ## API
 
@@ -43,18 +62,18 @@ The wire format is `trackdo-protocol` v0.2.0 (`PROTOCOL_VERSION = 2`).
 | Status | Code | When |
 |---|---|---|
 | 400 | `invalid_json` | Body is not a JSON array of `OpDto`, or not sent as `application/json` |
-| 400 | `invalid_last_event_id` | `Last-Event-ID` is not a seq |
+| 400 | `invalid_last_event_id` | `Last-Event-ID` is not `<log_id>:<seq>` |
 | 400 | `unsupported_protocol_version` | `Trackdo-Protocol` missing or different |
 | 401 | `unauthorized` | Token missing or unknown (with `WWW-Authenticate: Bearer`) |
 | 409 | `task_mismatch` | A time entry op names a different task than the entry's first stored op |
-| 410 | `resync_required` | The event log cannot resume from `Last-Event-ID` |
+| 410 | `resync_required` | `Last-Event-ID` names another log, or a seq ahead of this one |
 | 413 | `too_large` | More than 500 ops or a body over 2 MiB |
 | 422 | `invalid_op` | `TryFrom<OpDto> for Op` failed, e.g. a non-canonical title |
 | 500 | `internal` | Anything else; details are logged, not returned |
 
 ### `GET /healthz`
 
-Unauthenticated. Returns `{"status":"ok","protocol_version":2}` so apps can
+Unauthenticated. Returns `{"status":"ok","protocol_version":3}` so apps can
 check the URL and compatibility before asking for a token.
 
 ### `POST /ops`
@@ -76,15 +95,16 @@ Server-sent events of every op after a position, in `seq` order.
 - The position is the `Last-Event-ID` header, used both for the first
   connection and for reconnects. Without it the stream starts at the beginning
   of the log.
-- One event per op: `id: <seq>`, `event: op`, `data: <OpDto JSON>`. Clients
-  pass each to `Replica::apply_remote(&op, seq)`; duplicates are harmless.
+- One event per op: `id: <log_id>:<seq>` (`trackdo_protocol::event::EventId`),
+  `event: op`, `data: <OpDto JSON>`. Clients pass each op with its `seq` to
+  `Replica::apply_remote`; duplicates are harmless.
 - A `:keepalive` comment line is sent every 15 seconds. No `retry:` field is sent;
   reconnecting with backoff is the client's job.
 - When the stream cannot resume, the server answers `410 resync_required`
   before streaming. The client then fetches `GET /snapshot`, applies it, and
-  reconnects with `Last-Event-ID` set to the snapshot's `seq`.
-  Currently this happens only when `Last-Event-ID` is ahead of the newest
-  `seq`, which means the server lost data.
+  reconnects from the snapshot's `log_id` and `seq`. This happens when
+  `Last-Event-ID` names another log (the server restarted, perhaps from a
+  backup) or a `seq` ahead of the newest one (the log lost ops).
 - Delivery reads from the database only. The stream fetches up to 500 ops
   after the last one sent, and when caught up waits on a per-user notification
   that new ops were stored. It subscribes before reading, so no notification
@@ -95,8 +115,8 @@ Server-sent events of every op after a position, in `seq` order.
 ### `GET /snapshot`
 
 Returns `SnapshotDto`: the log replayed in `seq` order with `Task::apply` /
-`TimeEntry::apply`, with `seq` set to the newest `seq` (`null` for an empty
-log). It is computed on every request; there is no cache.
+`TimeEntry::apply`, with the log's `log_id` and `seq` set to the newest `seq`
+(`null` for an empty log). It is computed on every request; there is no cache.
 
 ## Storage
 
@@ -139,11 +159,6 @@ CREATE INDEX ops_entry ON ops (user_id, entry_id, seq) WHERE entry_id IS NOT NUL
 - **Log compaction.** An op is about 300 bytes, so the log stays small for
   personal use. When added, requests from before the compaction point get the
   same `410 resync_required`.
-- **Recovery from server data loss.** After restoring an older database,
-  clients hold a `last_seq` ahead of the log. `Replica::apply_snapshot` keeps
-  `max(last_seq, snapshot.seq)`, so clients cannot rewind; fixing this needs a
-  trackdo-core change (e.g. a log epoch). Until then the database must be
-  backed up and never reset.
 
 ## Deployment and configuration
 

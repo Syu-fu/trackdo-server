@@ -32,8 +32,10 @@ docker run -d -p 8080:8080 -v trackdo:/data \
 ```
 
 Put TLS in front (a reverse proxy or tunnel), point health checks at
-`GET /healthz`, and back up `/data`: the server cannot recover clients from a
-lost or rolled-back database (see [docs/design.md](docs/design.md#not-done-yet)).
+`GET /healthz`, and back up `/data`. After a restore, clients resync and send
+back what the restored log lacks (see
+[docs/design.md](docs/design.md#log-identity)), but only what some device
+still holds can come back.
 
 ## Development
 
