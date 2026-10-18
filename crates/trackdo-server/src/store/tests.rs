@@ -5,7 +5,7 @@ use trackdo_core::task::{TaskChange, TaskId, TaskStatus};
 use trackdo_core::time_entry::{TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
 
-use super::{Store, UserId};
+use super::{Store, StoreError, UserId};
 
 const USER: UserId = UserId::DEFAULT;
 const OTHER: UserId = UserId(2);
@@ -149,6 +149,99 @@ async fn rejects_unknown_user() {
     let store = Store::in_memory().await.unwrap();
 
     assert!(store.append(OTHER, &[rename(1, "a")]).await.is_err());
+}
+
+const ENTRY: TimeEntryId = TimeEntryId(0xe);
+
+fn entry_op(id: u128, task: u128) -> Op {
+    Op::time_entry(
+        OpId(id),
+        ENTRY,
+        TaskId(task),
+        Hlc::new(1_000, 0, DeviceId(9)),
+        TimeEntryChange::Deleted(false),
+    )
+}
+
+fn assert_mismatch(result: Result<Vec<OpId>, StoreError>, op_id: u128, expected: u128) {
+    match result {
+        Err(StoreError::TaskMismatch {
+            op_id: rejected,
+            entry,
+            expected: first,
+            actual,
+        }) => {
+            assert_eq!(rejected, OpId(op_id));
+            assert_eq!(entry, ENTRY);
+            assert_eq!(first, TaskId(expected));
+            assert_ne!(actual, first);
+        }
+        other => panic!("expected a task mismatch, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn accepts_more_ops_for_an_entry_on_its_task() {
+    let store = Store::in_memory().await.unwrap();
+    store.append(USER, &[entry_op(1, 7)]).await.unwrap();
+
+    store.append(USER, &[entry_op(2, 7)]).await.unwrap();
+
+    assert_eq!(seqs(&all(&store, USER).await), [1, 2]);
+}
+
+#[tokio::test]
+async fn rejects_an_entry_moved_to_another_task() {
+    let store = Store::in_memory().await.unwrap();
+    store.append(USER, &[entry_op(1, 7)]).await.unwrap();
+
+    assert_mismatch(store.append(USER, &[entry_op(2, 8)]).await, 2, 7);
+    assert_eq!(ops(all(&store, USER).await), [entry_op(1, 7)]);
+}
+
+#[tokio::test]
+async fn rejects_the_whole_batch_on_a_mismatch() {
+    let store = Store::in_memory().await.unwrap();
+    store.append(USER, &[entry_op(1, 7)]).await.unwrap();
+
+    let result = store
+        .append(USER, &[rename(2, "a"), entry_op(3, 8), rename(4, "b")])
+        .await;
+
+    assert_mismatch(result, 3, 7);
+    assert_eq!(seqs(&all(&store, USER).await), [1]);
+}
+
+#[tokio::test]
+async fn rejects_a_mismatch_within_one_batch() {
+    let store = Store::in_memory().await.unwrap();
+
+    let result = store.append(USER, &[entry_op(1, 7), entry_op(2, 8)]).await;
+
+    assert_mismatch(result, 2, 7);
+    assert!(all(&store, USER).await.is_empty());
+}
+
+#[tokio::test]
+async fn does_not_recheck_retransmitted_ops() {
+    let store = Store::in_memory().await.unwrap();
+    store.append(USER, &[entry_op(1, 7)]).await.unwrap();
+
+    let accepted = store.append(USER, &[entry_op(1, 8)]).await.unwrap();
+
+    assert_eq!(accepted, [OpId(1)]);
+    assert_eq!(ops(all(&store, USER).await), [entry_op(1, 7)]);
+}
+
+#[tokio::test]
+async fn entries_of_different_users_are_independent() {
+    let store = Store::in_memory().await.unwrap();
+    add_user(&store, OTHER).await;
+    store.append(USER, &[entry_op(1, 7)]).await.unwrap();
+
+    store.append(OTHER, &[entry_op(1, 8)]).await.unwrap();
+
+    assert_eq!(ops(all(&store, OTHER).await), [entry_op(1, 8)]);
 }
 
 /// A database file in a fresh directory, removed on drop.

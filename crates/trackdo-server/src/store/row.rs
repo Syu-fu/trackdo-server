@@ -145,11 +145,11 @@ fn flag(value: i64) -> Option<bool> {
 }
 
 /// Big-endian, matching the UUID byte order on the wire.
-fn id_bytes(id: u128) -> Vec<u8> {
+pub(super) fn id_bytes(id: u128) -> Vec<u8> {
     id.to_be_bytes().to_vec()
 }
 
-fn id(bytes: &[u8]) -> Option<u128> {
+pub(super) fn id(bytes: &[u8]) -> Option<u128> {
     Some(u128::from_be_bytes(bytes.try_into().ok()?))
 }
 

@@ -7,9 +7,11 @@ use std::time::Duration;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::{SqliteConnection, SqlitePool};
 use thiserror::Error;
-use trackdo_core::op::{Op, OpId, Seq};
+use trackdo_core::op::{Op, OpId, OpTarget, Seq};
+use trackdo_core::task::TaskId;
+use trackdo_core::time_entry::TimeEntryId;
 
-use self::row::OpRow;
+use self::row::{OpRow, id, id_bytes};
 
 mod row;
 
@@ -32,6 +34,15 @@ pub enum StoreError {
     Migrate(#[from] sqlx::migrate::MigrateError),
     #[error("stored op at seq {0} cannot be decoded")]
     Corrupt(i64),
+    /// An entry's task is fixed by its first stored op; clients rely on the
+    /// server never accepting anything else.
+    #[error("op {op_id:?}: time entry {entry:?} belongs to {expected:?}, not {actual:?}")]
+    TaskMismatch {
+        op_id: OpId,
+        entry: TimeEntryId,
+        expected: TaskId,
+        actual: TaskId,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +84,8 @@ impl Store {
     /// Stores the ops not seen before, in order, under new sequence numbers.
     ///
     /// Returns the ids of every op in `ops`, retransmitted ones included.
+    /// Fails without storing anything if a new op would move a time entry to
+    /// another task. Retransmitted ops are not checked again.
     pub async fn append(&self, user: UserId, ops: &[Op]) -> Result<Vec<OpId>, StoreError> {
         // Taking the write lock up front serializes sequence numbering.
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -84,6 +97,8 @@ impl Store {
         for op in ops {
             if insert(&mut tx, user, &OpRow::encode(last + 1, op)).await? {
                 last += 1;
+                // Dropping the transaction on error stores nothing of the batch.
+                check_entry_task(&mut tx, user, op).await?;
             }
         }
         tx.commit().await?;
@@ -145,6 +160,39 @@ async fn insert(
     .execute(conn)
     .await?;
     Ok(result.rows_affected() == 1)
+}
+
+/// Fails if `op`, just inserted, writes a time entry whose first stored op
+/// names another task.
+async fn check_entry_task(
+    conn: &mut SqliteConnection,
+    user: UserId,
+    op: &Op,
+) -> Result<(), StoreError> {
+    let OpTarget::TimeEntry {
+        entry_id, task_id, ..
+    } = op.target
+    else {
+        return Ok(());
+    };
+    let (seq, first): (i64, Vec<u8>) = sqlx::query_as(
+        "SELECT seq, task_id FROM ops WHERE user_id = ? AND entry_id = ? ORDER BY seq LIMIT 1",
+    )
+    .bind(user.0)
+    .bind(id_bytes(entry_id.0))
+    .fetch_one(conn)
+    .await?;
+    let expected = TaskId(id(&first).ok_or(StoreError::Corrupt(seq))?);
+    if expected == task_id {
+        Ok(())
+    } else {
+        Err(StoreError::TaskMismatch {
+            op_id: op.op_id,
+            entry: entry_id,
+            expected,
+            actual: task_id,
+        })
+    }
 }
 
 #[cfg(test)]
