@@ -3,6 +3,8 @@
 //! Validates, orders, stores and broadcasts operations defined by
 //! `trackdo-protocol`. Conflict resolution stays on the clients.
 
+pub mod store;
+
 #[cfg(test)]
 mod tests {
     #[test]
