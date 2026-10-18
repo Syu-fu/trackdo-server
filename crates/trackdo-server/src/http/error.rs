@@ -18,6 +18,7 @@ pub enum ErrorCode {
     UnsupportedProtocolVersion,
     Unauthorized,
     TaskMismatch,
+    ResyncRequired,
     TooLarge,
     InvalidOp,
     Internal,
@@ -72,6 +73,10 @@ impl ApiError {
             ErrorCode::InvalidLastEventId,
             "Last-Event-ID must be a seq",
         )
+    }
+
+    pub fn resync_required(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::GONE, ErrorCode::ResyncRequired, message)
     }
 
     pub fn too_large(message: impl Into<String>) -> Self {

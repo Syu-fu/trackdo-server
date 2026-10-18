@@ -232,3 +232,59 @@ async fn rejects_a_malformed_last_event_id() {
     assert_eq!(reply.status, StatusCode::BAD_REQUEST);
     assert_eq!(reply.error_code(), json!("invalid_last_event_id"));
 }
+
+/// A refused stream; an accepted one would never end, so it fails the test.
+async fn open_after(app: &Router, last_event_id: &str) -> common::Reply {
+    let request = authorized("GET", "/events")
+        .header("last-event-id", last_event_id)
+        .body(Body::empty())
+        .unwrap();
+    timeout(DEADLINE, send(app, request))
+        .await
+        .expect("the stream was not refused")
+}
+
+#[tokio::test]
+async fn asks_to_resync_when_ahead_of_the_log() {
+    let (app, store) = app().await;
+    store
+        .append(UserId::DEFAULT, &[rename(1), rename(2)])
+        .await
+        .unwrap();
+
+    let reply = open_after(&app, "3").await;
+
+    assert_eq!(reply.status, StatusCode::GONE);
+    assert_eq!(reply.error_code(), json!("resync_required"));
+}
+
+#[tokio::test]
+async fn asks_to_resync_when_the_log_is_empty() {
+    let (app, _) = app().await;
+
+    let reply = open_after(&app, "1").await;
+
+    assert_eq!(reply.status, StatusCode::GONE);
+    assert_eq!(reply.error_code(), json!("resync_required"));
+}
+
+#[tokio::test]
+async fn streams_when_caught_up_with_the_log() {
+    let (app, store) = app().await;
+    store.append(UserId::DEFAULT, &[rename(1)]).await.unwrap();
+    let mut events = Events::open(&app, Some("1")).await;
+    events.assert_quiet().await;
+
+    post(&app, &[rename(2)]).await;
+
+    assert_eq!(events.next().await, event(2, &rename(2)));
+}
+
+#[tokio::test]
+async fn streams_from_zero_on_an_empty_log() {
+    let (app, _) = app().await;
+
+    let mut events = Events::open(&app, Some("0")).await;
+
+    events.assert_quiet().await;
+}

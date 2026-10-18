@@ -151,6 +151,21 @@ async fn rejects_unknown_user() {
     assert!(store.append(OTHER, &[rename(1, "a")]).await.is_err());
 }
 
+#[tokio::test]
+async fn head_is_the_newest_seq_of_the_user() {
+    let store = Store::in_memory().await.unwrap();
+    add_user(&store, OTHER).await;
+    assert_eq!(store.head(USER).await.unwrap(), None);
+
+    store
+        .append(USER, &[rename(1, "a"), rename(2, "b")])
+        .await
+        .unwrap();
+
+    assert_eq!(store.head(USER).await.unwrap(), Some(Seq(2)));
+    assert_eq!(store.head(OTHER).await.unwrap(), None);
+}
+
 const ENTRY: TimeEntryId = TimeEntryId(0xe);
 
 fn entry_op(id: u128, task: u128) -> Op {

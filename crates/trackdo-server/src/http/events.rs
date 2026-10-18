@@ -29,6 +29,9 @@ pub(super) fn routes() -> Router<AppState> {
 
 /// Streams every op after `Last-Event-ID` (from the start without it), then
 /// each op stored afterwards.
+///
+/// A position the log cannot resume from is refused before streaming, so the
+/// client resyncs from `GET /snapshot` instead of silently missing ops.
 async fn get_events(
     session: Session,
     State(store): State<Store>,
@@ -36,6 +39,7 @@ async fn get_events(
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, ApiError> {
     let after = last_event_id(&headers)?;
+    check_resumable(&store, session.user, after).await?;
     let cursor = Cursor {
         store,
         user: session.user,
@@ -59,6 +63,21 @@ fn last_event_id(headers: &HeaderMap) -> Result<Option<Seq>, ApiError> {
                 .ok_or_else(ApiError::invalid_last_event_id)
         })
         .transpose()
+}
+
+/// Positions ahead of the log mean the server lost ops the client has seen.
+async fn check_resumable(store: &Store, user: UserId, after: Option<Seq>) -> Result<(), ApiError> {
+    let Some(Seq(after)) = after else {
+        return Ok(());
+    };
+    let head = store.head(user).await?.map_or(0, |Seq(seq)| seq);
+    if after <= head {
+        Ok(())
+    } else {
+        Err(ApiError::resync_required(format!(
+            "the log ends at seq {head}, before {after}; fetch GET /snapshot"
+        )))
+    }
 }
 
 /// Position in one user's log. The store is the only source of ops; the

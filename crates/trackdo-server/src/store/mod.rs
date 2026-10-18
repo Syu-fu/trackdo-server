@@ -105,6 +105,20 @@ impl Store {
         Ok(ops.iter().map(|op| op.op_id).collect())
     }
 
+    /// The newest seq of the user's log, `None` while it is empty.
+    pub async fn head(&self, user: UserId) -> Result<Option<Seq>, StoreError> {
+        let seq: Option<i64> = sqlx::query_scalar("SELECT MAX(seq) FROM ops WHERE user_id = ?")
+            .bind(user.0)
+            .fetch_one(&self.pool)
+            .await?;
+        seq.map(|seq| {
+            u64::try_from(seq)
+                .map(Seq)
+                .map_err(|_| StoreError::Corrupt(seq))
+        })
+        .transpose()
+    }
+
     /// Up to `limit` ops after `after` (from the start when `None`), in
     /// sequence order.
     pub async fn ops_after(
