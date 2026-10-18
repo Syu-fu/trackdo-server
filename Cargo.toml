@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/trackdo-server"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT"
+repository = "https://github.com/Syu-fu/trackdo-server"
+publish = false
+
+[workspace.dependencies]
+trackdo-protocol = { git = "https://github.com/Syu-fu/trackdo-core", tag = "v0.2.0" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
