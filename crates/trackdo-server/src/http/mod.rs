@@ -17,6 +17,7 @@ use crate::store::Store;
 mod error;
 mod ops;
 mod session;
+mod snapshot;
 
 pub use self::error::ApiError;
 pub use self::session::Session;
@@ -46,6 +47,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .merge(ops::routes())
+        .merge(snapshot::routes())
         .layer(map_response(name_protocol_version))
         .with_state(state)
 }
