@@ -12,12 +12,16 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
+use trackdo_core::op::LogId;
 use trackdo_server::auth::{TokenDigest, Tokens};
 use trackdo_server::http::{AppState, router};
 use trackdo_server::notify::Notifier;
 use trackdo_server::store::Store;
 
 pub const TOKEN: &str = "secret";
+/// The log served by [`app`].
+pub const LOG: LogId = LogId(0x0192_8f30_0000_7000_8000_0000_0000_0001);
+pub const LOG_UUID: &str = "01928f30-0000-7000-8000-000000000001";
 
 /// The router over a fresh in-memory store, which tests may inspect.
 pub async fn app() -> (Router, Store) {
@@ -32,6 +36,7 @@ pub async fn app_closed_by(closing: CancellationToken) -> (Router, Store) {
         store: store.clone(),
         notifier: Notifier::default(),
         closing,
+        log_id: LOG,
     });
     (app, store)
 }
@@ -42,7 +47,7 @@ pub fn authorized(method: &str, uri: &str) -> axum::http::request::Builder {
         .method(method)
         .uri(uri)
         .header("authorization", format!("Bearer {TOKEN}"))
-        .header("trackdo-protocol", "2")
+        .header("trackdo-protocol", "3")
 }
 
 pub struct Reply {

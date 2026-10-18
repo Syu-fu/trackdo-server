@@ -11,8 +11,8 @@ repository = "https://github.com/Syu-fu/trackdo-server"
 publish = false
 
 [workspace.dependencies]
-trackdo-core = { git = "https://github.com/Syu-fu/trackdo-core", tag = "v0.2.0" }
-trackdo-protocol = { git = "https://github.com/Syu-fu/trackdo-core", tag = "v0.2.0" }
+trackdo-core = { git = "https://github.com/Syu-fu/trackdo-core", tag = "v0.3.0" }
+trackdo-protocol = { git = "https://github.com/Syu-fu/trackdo-core", tag = "v0.3.0" }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 thiserror = "2"
 axum = "0.8"

@@ -3,6 +3,7 @@
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
+use trackdo_core::op::LogId;
 use trackdo_protocol::snapshot::SnapshotDto;
 
 use super::{ApiError, AppState, Session};
@@ -17,7 +18,8 @@ pub(super) fn routes() -> Router<AppState> {
 async fn get_snapshot(
     session: Session,
     State(store): State<Store>,
+    State(log_id): State<LogId>,
 ) -> Result<Json<SnapshotDto>, ApiError> {
     let log = store.ops_after(session.user, None, u32::MAX).await?;
-    Ok(Json(SnapshotDto::from(&replay(&log))))
+    Ok(Json(SnapshotDto::from(&replay(log_id, &log))))
 }

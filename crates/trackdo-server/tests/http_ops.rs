@@ -107,7 +107,7 @@ async fn accepts_an_empty_batch() {
 async fn requires_a_token_before_reading_the_body() {
     let (app, _) = app().await;
     let request = Request::post("/ops")
-        .header("trackdo-protocol", "2")
+        .header("trackdo-protocol", "3")
         .body(Body::from("not json"))
         .unwrap();
 

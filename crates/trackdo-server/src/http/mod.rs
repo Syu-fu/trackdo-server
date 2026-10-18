@@ -10,6 +10,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
+use trackdo_core::op::LogId;
 use trackdo_protocol::PROTOCOL_VERSION;
 
 use crate::auth::Tokens;
@@ -39,6 +40,8 @@ pub struct AppState {
     pub notifier: Notifier,
     /// Cancelled on shutdown, which ends open event streams.
     pub closing: CancellationToken,
+    /// Identity of the logs this process serves; see `server::serve`.
+    pub log_id: LogId,
 }
 
 impl FromRef<AppState> for Arc<Tokens> {
@@ -56,6 +59,12 @@ impl FromRef<AppState> for Store {
 impl FromRef<AppState> for CancellationToken {
     fn from_ref(state: &AppState) -> Self {
         state.closing.clone()
+    }
+}
+
+impl FromRef<AppState> for LogId {
+    fn from_ref(state: &AppState) -> Self {
+        state.log_id
     }
 }
 

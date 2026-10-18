@@ -108,7 +108,7 @@ async fn shuts_down_while_event_streams_are_open() {
             "GET /events HTTP/1.1",
             "Host: test",
             "Authorization: Bearer secret",
-            "Trackdo-Protocol: 2",
+            "Trackdo-Protocol: 3",
         ],
     )
     .await;
@@ -126,6 +126,51 @@ async fn shuts_down_while_event_streams_are_open() {
         .await
         .expect("stream left open")
         .unwrap();
+}
+
+async fn snapshot_log_id(addr: SocketAddr) -> String {
+    let mut stream = request(
+        addr,
+        &[
+            "GET /snapshot HTTP/1.1",
+            "Host: test",
+            "Authorization: Bearer secret",
+            "Trackdo-Protocol: 3",
+            "Connection: close",
+        ],
+    )
+    .await;
+    let mut response = String::new();
+    timeout(DEADLINE, stream.read_to_string(&mut response))
+        .await
+        .expect("no response in time")
+        .unwrap();
+    let (_, body) = response.split_once("\r\n\r\n").unwrap();
+    let body: serde_json::Value = serde_json::from_str(body).unwrap();
+    body["log_id"].as_str().unwrap().to_owned()
+}
+
+async fn stop(running: Running) {
+    running.stop.send(()).unwrap();
+    running.server.await.unwrap().unwrap();
+}
+
+/// A restored backup always means a restart, so a new process must never
+/// serve the log under the id clients already know.
+#[tokio::test]
+async fn names_the_log_anew_on_every_start() {
+    let dir = TempDir::new("restart");
+    let database = dir.0.join("trackdo.db");
+
+    let first = start(database.clone()).await;
+    let before = snapshot_log_id(first.addr).await;
+    assert_eq!(before, snapshot_log_id(first.addr).await);
+    stop(first).await;
+    let second = start(database).await;
+    let after = snapshot_log_id(second.addr).await;
+    stop(second).await;
+
+    assert_ne!(before, after);
 }
 
 #[tokio::test]

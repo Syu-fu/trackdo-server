@@ -8,7 +8,7 @@ use proptest::prelude::*;
 use proptest::sample::Index;
 
 use trackdo_core::hlc::{DeviceId, Hlc};
-use trackdo_core::op::{Op, OpId, OpTarget, Seq};
+use trackdo_core::op::{LogId, Op, OpId, OpTarget, Seq};
 use trackdo_core::task::{Task, TaskChange, TaskId, TaskStatus};
 use trackdo_core::time_entry::{TimeEntry, TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
@@ -154,7 +154,7 @@ proptest! {
     fn snapshot_does_not_depend_on_arrival_order(
         (ops, batches) in any_ops().prop_flat_map(|ops| (Just(ops.clone()), arrivals(ops)))
     ) {
-        let snapshot = replay(&store_all(&batches));
+        let snapshot = replay(LogId(1), &store_all(&batches));
 
         let (tasks, time_entries) = expected_state(&ops);
         prop_assert_eq!(snapshot.tasks, tasks);

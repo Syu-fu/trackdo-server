@@ -2,14 +2,14 @@
 
 use std::collections::BTreeMap;
 
-use trackdo_core::op::{Op, OpTarget, Seq};
+use trackdo_core::op::{LogId, Op, OpTarget, Seq};
 use trackdo_core::replica::Snapshot;
 use trackdo_core::task::Task;
 use trackdo_core::time_entry::TimeEntry;
 
-/// Applies `log`, in the given (sequence) order, to empty state. Tasks and
-/// time entries come out ordered by id.
-pub fn replay(log: &[(Seq, Op)]) -> Snapshot {
+/// Applies `log`, the ops of the log `log_id` in sequence order, to empty
+/// state. Tasks and time entries come out ordered by id.
+pub fn replay(log_id: LogId, log: &[(Seq, Op)]) -> Snapshot {
     let mut tasks = BTreeMap::new();
     let mut entries = BTreeMap::new();
     for (_, op) in log {
@@ -35,6 +35,7 @@ pub fn replay(log: &[(Seq, Op)]) -> Snapshot {
         }
     }
     Snapshot {
+        log_id,
         tasks: tasks.into_values().collect(),
         time_entries: entries.into_values().collect(),
         seq: log.last().map(|(seq, _)| *seq),
@@ -44,13 +45,19 @@ pub fn replay(log: &[(Seq, Op)]) -> Snapshot {
 #[cfg(test)]
 mod tests {
     use trackdo_core::hlc::{DeviceId, Hlc};
-    use trackdo_core::op::{Op, OpId, Seq};
+    use trackdo_core::op::{LogId, Op, OpId, Seq};
     use trackdo_core::replica::Snapshot;
     use trackdo_core::task::{Task, TaskChange, TaskId, TaskStatus};
     use trackdo_core::time_entry::{TimeEntry, TimeEntryChange, TimeEntryId, Timestamp};
     use trackdo_core::title::Title;
 
-    use super::replay;
+    use super::replay as replay_in;
+
+    const LOG: LogId = LogId(0x10);
+
+    fn replay(log: &[(Seq, Op)]) -> Snapshot {
+        replay_in(LOG, log)
+    }
 
     const TASK: TaskId = TaskId(7);
     const ENTRY: TimeEntryId = TimeEntryId(0xe);
@@ -74,7 +81,22 @@ mod tests {
 
     #[test]
     fn empty_log_gives_empty_snapshot() {
-        assert_eq!(replay(&[]), Snapshot::default());
+        assert_eq!(
+            replay(&[]),
+            Snapshot {
+                log_id: LOG,
+                tasks: Vec::new(),
+                time_entries: Vec::new(),
+                seq: None,
+            }
+        );
+    }
+
+    #[test]
+    fn names_the_log() {
+        let log = [task_op(1, 10, title("a"))];
+
+        assert_eq!(replay_in(LogId(7), &log).log_id, LogId(7));
     }
 
     #[test]

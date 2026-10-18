@@ -1850,16 +1850,16 @@ dependencies = [
 
 [[package]]
 name = "trackdo-core"
-version = "0.2.0"
-source = "git+https://github.com/Syu-fu/trackdo-core?tag=v0.2.0#e0024b72e4b67b60687ec244bb4feddfe356d7a0"
+version = "0.3.0"
+source = "git+https://github.com/Syu-fu/trackdo-core?tag=v0.3.0#23b3f8be0332d293dcfb0be533da64de79c2843d"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "trackdo-protocol"
-version = "0.2.0"
-source = "git+https://github.com/Syu-fu/trackdo-core?tag=v0.2.0#e0024b72e4b67b60687ec244bb4feddfe356d7a0"
+version = "0.3.0"
+source = "git+https://github.com/Syu-fu/trackdo-core?tag=v0.3.0#23b3f8be0332d293dcfb0be533da64de79c2843d"
 dependencies = [
  "serde",
  "thiserror",
@@ -1955,6 +1955,7 @@ version = "1.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
 dependencies = [
+ "getrandom 0.4.3",
  "serde_core",
 ]
 

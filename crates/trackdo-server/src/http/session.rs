@@ -98,7 +98,7 @@ mod tests {
     }
 
     const BEARER: (&str, &str) = ("authorization", "Bearer secret");
-    const VERSION: (&str, &str) = ("trackdo-protocol", "2");
+    const VERSION: (&str, &str) = ("trackdo-protocol", "3");
 
     #[tokio::test]
     async fn admits_a_valid_token_and_version() {
@@ -149,7 +149,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_another_version() {
-        let (status, _, body) = call(&[BEARER, ("trackdo-protocol", "1")]).await;
+        let (status, _, body) = call(&[BEARER, ("trackdo-protocol", "2")]).await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(error_code(&body), json!("unsupported_protocol_version"));
@@ -157,7 +157,7 @@ mod tests {
 
     #[tokio::test]
     async fn checks_the_token_before_the_version() {
-        let (status, _, _) = call(&[("trackdo-protocol", "1")]).await;
+        let (status, _, _) = call(&[("trackdo-protocol", "2")]).await;
 
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }

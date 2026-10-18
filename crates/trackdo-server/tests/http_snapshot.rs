@@ -13,7 +13,7 @@ use trackdo_core::title::Title;
 use trackdo_protocol::snapshot::SnapshotDto;
 use trackdo_server::store::UserId;
 
-use common::{Reply, app, authorized, send};
+use common::{LOG, LOG_UUID, Reply, app, authorized, send};
 
 const TASK: TaskId = TaskId(7);
 const ENTRY: TimeEntryId = TimeEntryId(0xe);
@@ -48,7 +48,7 @@ async fn empty_log_has_no_seq() {
     assert_eq!(reply.status, StatusCode::OK);
     assert_eq!(
         reply.json(),
-        json!({ "seq": null, "tasks": [], "time_entries": [] })
+        json!({ "log_id": LOG_UUID, "seq": null, "tasks": [], "time_entries": [] })
     );
 }
 
@@ -78,6 +78,7 @@ async fn replays_the_log_as_of_its_last_seq() {
     assert_eq!(
         snapshot,
         Snapshot {
+            log_id: LOG,
             tasks: vec![task],
             time_entries: vec![entry],
             seq: Some(Seq(4)),
