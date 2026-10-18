@@ -7,6 +7,8 @@ resolution stays on the clients.
 
 > **Status:** early development.
 
+See [docs/design.md](docs/design.md) for the API, storage and deployment.
+
 ## Development
 
 Requires the toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml).
