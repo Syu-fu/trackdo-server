@@ -22,8 +22,8 @@ Other settings (listen address, database path, log filter) are listed in
 
 ### Container
 
-Pushing a `v*` tag publishes `ghcr.io/syu-fu/trackdo-server` (linux/amd64).
-Run exactly one instance, with `/data` on persistent storage:
+Pushing a `v*` tag publishes `ghcr.io/syu-fu/trackdo-server` for linux/amd64
+and linux/arm64. Run exactly one instance, with `/data` on persistent storage:
 
 ```sh
 docker run -d -p 8080:8080 -v trackdo:/data \
