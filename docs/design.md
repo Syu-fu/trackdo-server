@@ -42,7 +42,7 @@ The wire format is `trackdo-protocol` v0.2.0 (`PROTOCOL_VERSION = 2`).
 
 | Status | Code | When |
 |---|---|---|
-| 400 | `invalid_json` | Body is not a JSON array of `OpDto` |
+| 400 | `invalid_json` | Body is not a JSON array of `OpDto`, or not sent as `application/json` |
 | 400 | `unsupported_protocol_version` | `Trackdo-Protocol` missing or different |
 | 401 | `unauthorized` | Token missing or unknown (with `WWW-Authenticate: Bearer`) |
 | 409 | `task_mismatch` | A time entry op names a different task than the entry's first stored op |

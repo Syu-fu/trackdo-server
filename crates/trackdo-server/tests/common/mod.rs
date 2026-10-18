@@ -1,5 +1,8 @@
 //! Drives the full router in-process.
 
+// Each test binary uses only some of these helpers.
+#![allow(dead_code)]
+
 use std::sync::Arc;
 
 use axum::Router;
@@ -10,13 +13,27 @@ use tower::ServiceExt;
 
 use trackdo_server::auth::{TokenDigest, Tokens};
 use trackdo_server::http::{AppState, router};
+use trackdo_server::store::Store;
 
 pub const TOKEN: &str = "secret";
 
-pub fn app() -> Router {
-    router(AppState {
+/// The router over a fresh in-memory store, which tests may inspect.
+pub async fn app() -> (Router, Store) {
+    let store = Store::in_memory().await.unwrap();
+    let app = router(AppState {
         tokens: Arc::new(Tokens::new(vec![TokenDigest::of(TOKEN)])),
-    })
+        store: store.clone(),
+    });
+    (app, store)
+}
+
+/// A request to an authenticated endpoint, with token and protocol version.
+pub fn authorized(method: &str, uri: &str) -> axum::http::request::Builder {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .header("trackdo-protocol", "2")
 }
 
 pub struct Reply {
@@ -28,6 +45,10 @@ pub struct Reply {
 impl Reply {
     pub fn json(&self) -> Value {
         serde_json::from_slice(&self.body).unwrap()
+    }
+
+    pub fn error_code(&self) -> Value {
+        self.json()["error"]["code"].clone()
     }
 }
 

@@ -8,11 +8,9 @@ use common::{app, send};
 
 #[tokio::test]
 async fn healthz_needs_no_token_and_reports_the_protocol() {
-    let reply = send(
-        &app(),
-        Request::get("/healthz").body(Body::empty()).unwrap(),
-    )
-    .await;
+    let (app, _) = app().await;
+
+    let reply = send(&app, Request::get("/healthz").body(Body::empty()).unwrap()).await;
 
     assert_eq!(reply.status, StatusCode::OK);
     assert_eq!(
@@ -23,7 +21,7 @@ async fn healthz_needs_no_token_and_reports_the_protocol() {
 
 #[tokio::test]
 async fn every_response_names_the_protocol_version() {
-    let app = app();
+    let (app, _) = app().await;
 
     let found = send(&app, Request::get("/healthz").body(Body::empty()).unwrap()).await;
     let missing = send(&app, Request::get("/nowhere").body(Body::empty()).unwrap()).await;

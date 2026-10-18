@@ -12,8 +12,10 @@ use serde::Serialize;
 use trackdo_protocol::PROTOCOL_VERSION;
 
 use crate::auth::Tokens;
+use crate::store::Store;
 
 mod error;
+mod ops;
 mod session;
 
 pub use self::error::ApiError;
@@ -25,6 +27,7 @@ pub const PROTOCOL_HEADER: HeaderName = HeaderName::from_static("trackdo-protoco
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub tokens: Arc<Tokens>,
+    pub store: Store,
 }
 
 impl FromRef<AppState> for Arc<Tokens> {
@@ -33,9 +36,16 @@ impl FromRef<AppState> for Arc<Tokens> {
     }
 }
 
+impl FromRef<AppState> for Store {
+    fn from_ref(state: &AppState) -> Self {
+        state.store.clone()
+    }
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
+        .merge(ops::routes())
         .layer(map_response(name_protocol_version))
         .with_state(state)
 }

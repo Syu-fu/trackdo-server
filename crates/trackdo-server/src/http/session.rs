@@ -64,14 +64,12 @@ mod tests {
 
     use super::Session;
     use crate::auth::{TokenDigest, Tokens};
-    use crate::http::{AppState, PROTOCOL_HEADER};
+    use crate::http::PROTOCOL_HEADER;
 
     const TOKEN: &str = "secret";
 
     fn probe() -> Router {
-        let state = AppState {
-            tokens: Arc::new(Tokens::new(vec![TokenDigest::of(TOKEN)])),
-        };
+        let state = Arc::new(Tokens::new(vec![TokenDigest::of(TOKEN)]));
         Router::new()
             .route(
                 "/probe",
