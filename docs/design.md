@@ -4,9 +4,12 @@ The server validates, orders, stores and broadcasts operations. Conflict
 resolution (LWW), timer healing and the "one running timer" rule all live in
 the clients through [trackdo-core](https://github.com/Syu-fu/trackdo-core).
 The server never holds a `Replica`; replaying the log to build a snapshot is
-its only use of domain logic (`Task::apply` / `TimeEntry::apply`).
+its only use of domain logic (`Task::apply` / `TimeEntry::apply` /
+`Tag::apply`).
 
-The wire format is `trackdo-protocol` v0.3.0 (`PROTOCOL_VERSION = 3`).
+The wire format is `trackdo-protocol` v0.4.0 (`PROTOCOL_VERSION = 4`).
+Subtask trees, cycle breaking and hidden deleted tags are derived on the
+clients too; the server stores and replays task, time entry and tag ops alike.
 
 ## Authentication
 
@@ -23,10 +26,10 @@ The wire format is `trackdo-protocol` v0.3.0 (`PROTOCOL_VERSION = 3`).
 
 ## Protocol version
 
-- Authenticated requests must send `Trackdo-Protocol: 3`. A missing or
+- Authenticated requests must send `Trackdo-Protocol: 4`. A missing or
   different value is rejected with `400 unsupported_protocol_version`.
   Authentication is checked first.
-- Every response carries `Trackdo-Protocol: 3`, so a client can tell whether
+- Every response carries `Trackdo-Protocol: 4`, so a client can tell whether
   the app or the server needs updating.
 - Only an exact match is accepted.
 
@@ -73,12 +76,14 @@ the log they know; a position in another log is refused, so they resync.
 
 ### `GET /healthz`
 
-Unauthenticated. Returns `{"status":"ok","protocol_version":3}` so apps can
+Unauthenticated. Returns `{"status":"ok","protocol_version":4}` so apps can
 check the URL and compatibility before asking for a token.
 
 ### `POST /ops`
 
-- Body: a JSON array of `OpDto`, at most 500 items and 2 MiB.
+- Body: a JSON array of `OpDto`, at most 500 items and 2 MiB. Notes can be
+  up to 10,000 characters, so clients split batches by size as well as by
+  count.
 - The batch is atomic: if any op is invalid or mismatches its entry's task,
   nothing is stored and the error names the first offending `op_id`.
 - Ops are deduplicated by `op_id` per user. Retransmitted ops are not stored
@@ -115,8 +120,9 @@ Server-sent events of every op after a position, in `seq` order.
 ### `GET /snapshot`
 
 Returns `SnapshotDto`: the log replayed in `seq` order with `Task::apply` /
-`TimeEntry::apply`, with the log's `log_id` and `seq` set to the newest `seq`
-(`null` for an empty log). It is computed on every request; there is no cache.
+`TimeEntry::apply` / `Tag::apply`, with the log's `log_id` and `seq` set to
+the newest `seq` (`null` for an empty log). It is computed on every request;
+there is no cache.
 
 ## Storage
 
@@ -133,15 +139,17 @@ CREATE TABLE ops (
   hlc_wall_ms INTEGER NOT NULL,
   hlc_counter INTEGER NOT NULL,
   hlc_device  BLOB    NOT NULL,
-  target      TEXT    NOT NULL,   -- 'task' | 'time_entry'
-  task_id     BLOB    NOT NULL,
-  entry_id    BLOB,               -- NOT NULL exactly for time entry ops
+  target      TEXT    NOT NULL,   -- 'task' | 'time_entry' | 'tag'
+  task_id     BLOB,               -- task and time entry ops
+  entry_id    BLOB,               -- time entry ops
+  tag_id      BLOB,               -- tag ops, and the tag of a task 'tag' op
   field       TEXT    NOT NULL,
-  value_text  TEXT,               -- title, status
-  value_int   INTEGER,            -- times in ms, deleted as 0/1; NULL stop = running
+  value_text  TEXT,               -- title, status, priority, note, due, tag name
+  value_int   INTEGER,            -- times in ms, flags as 0/1; NULL stop = running
+  value_id    BLOB,               -- parent; NULL = top level
   PRIMARY KEY (user_id, seq),
   UNIQUE (user_id, op_id),
-  CHECK (...)                     -- which value column each target/field uses
+  CHECK (...)                     -- which id and value columns each target/field uses
 ) WITHOUT ROWID;
 
 CREATE INDEX ops_entry ON ops (user_id, entry_id, seq) WHERE entry_id IS NOT NULL;
@@ -152,7 +160,14 @@ CREATE INDEX ops_entry ON ops (user_id, entry_id, seq) WHERE entry_id IS NOT NUL
 - An entry's task is the `task_id` of its first stored op, looked up through
   `ops_entry`. Mismatches within a single batch are rejected too.
 - `u64` values (HLC wall time, timestamps) are bit-cast to `i64`, which is
-  lossless; SQL never orders by them.
+  lossless; SQL never orders by them. Due dates are stored as `YYYY-MM-DD`.
+- The `CHECK` treats a `NULL` result as a failure, so a missing value never
+  slips through a comparison.
+- Rows are decoded back through the core types (`Title`, `Note`, `TagName`,
+  `Date`), and a stored value those would change is reported as corrupt
+  rather than served.
+- Migration `0002` rebuilt `ops` for trackdo-core v0.4.0, since SQLite cannot
+  change a `CHECK` in place, and copied every existing row unchanged.
 
 ### Not done (yet)
 
