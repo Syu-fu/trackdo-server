@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use trackdo_core::date::Date;
 use trackdo_core::hlc::{DeviceId, Hlc};
+use trackdo_core::note::{MAX_NOTE_CHARS, Note};
 use trackdo_core::op::{Op, OpId, Seq};
 use trackdo_core::tag::{TagChange, TagId, TagName};
 use trackdo_core::task::{TaskChange, TaskId};
@@ -251,9 +252,34 @@ async fn accepts_exactly_500_ops() {
 }
 
 #[tokio::test]
-async fn rejects_a_body_over_2_mib() {
+async fn accepts_500_ops_with_the_longest_notes() {
     let (app, _) = app().await;
-    let padding = " ".repeat(2 * 1024 * 1024);
+    // Control characters are escaped to six bytes each, the most any
+    // character takes in JSON.
+    let note = Note::new(&"\u{1}".repeat(MAX_NOTE_CHARS)).unwrap();
+    let hlc = Hlc::new(u64::MAX, u32::MAX, DeviceId(u128::MAX));
+    let ops: Vec<Op> = (1..=500)
+        .map(|id| {
+            Op::task(
+                OpId(id),
+                TaskId(u128::MAX),
+                hlc,
+                TaskChange::Note(note.clone()),
+            )
+        })
+        .collect();
+    let body = wire(&ops).to_string();
+    assert!(body.len() > 30_000_000, "{} bytes", body.len());
+
+    let reply = post(&app, body).await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn rejects_a_body_over_32_mib() {
+    let (app, _) = app().await;
+    let padding = " ".repeat(32 * 1024 * 1024);
 
     let reply = post(&app, format!("[]{padding}")).await;
 

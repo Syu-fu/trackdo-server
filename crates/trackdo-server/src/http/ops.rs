@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use serde::Serialize;
+use trackdo_core::note::MAX_NOTE_CHARS;
 use trackdo_core::op::{Op, OpId};
 use trackdo_protocol::op::OpDto;
 use uuid::Uuid;
@@ -16,8 +17,12 @@ use crate::store::Store;
 
 /// Most ops accepted in one request.
 const MAX_OPS: usize = 500;
-/// Largest accepted request body.
-const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+/// Largest JSON form of one op: a note at its longest, made of control
+/// characters that are escaped to six bytes each, plus the rest of the op.
+const MAX_OP_BYTES: usize = MAX_NOTE_CHARS * 6 + 1024;
+/// Largest accepted request body: enough for any batch of valid ops, so
+/// clients only split batches by count.
+const MAX_BODY_BYTES: usize = MAX_OPS * MAX_OP_BYTES;
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
