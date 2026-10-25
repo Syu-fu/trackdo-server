@@ -9,6 +9,7 @@ use proptest::sample::Index;
 
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::op::{LogId, Op, OpId, OpTarget, Seq};
+use trackdo_core::tag::{Tag, TagChange, TagId, TagName};
 use trackdo_core::task::{Task, TaskChange, TaskId, TaskStatus};
 use trackdo_core::time_entry::{TimeEntry, TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
@@ -29,6 +30,19 @@ fn any_task_change() -> impl Strategy<Value = TaskChange> {
             .prop_map(|title| TaskChange::Title(Title::new(title).unwrap())),
         prop::sample::select(vec![TaskStatus::Todo, TaskStatus::Done]).prop_map(TaskChange::Status),
         any::<bool>().prop_map(TaskChange::Deleted),
+        prop::option::of((0..IDS).prop_map(TaskId)).prop_map(TaskChange::Parent),
+        (0..IDS, any::<bool>()).prop_map(|(tag, tagged)| TaskChange::Tag {
+            tag: TagId(tag),
+            tagged,
+        }),
+    ]
+}
+
+fn any_tag_change() -> impl Strategy<Value = TagChange> {
+    prop_oneof![
+        prop::sample::select(vec!["a", "b"])
+            .prop_map(|name| TagChange::Name(TagName::new(name).unwrap())),
+        any::<bool>().prop_map(TagChange::Deleted),
     ]
 }
 
@@ -51,6 +65,10 @@ fn any_target() -> impl Strategy<Value = OpTarget> {
         (0..IDS, any_entry_change()).prop_map(|(entry, change)| OpTarget::TimeEntry {
             entry_id: TimeEntryId(entry),
             task_id: TaskId(entry % IDS),
+            change,
+        }),
+        (0..IDS, any_tag_change()).prop_map(|(tag, change)| OpTarget::Tag {
+            tag_id: TagId(tag),
             change,
         }),
     ]
@@ -101,9 +119,10 @@ fn batches(ops: &[Op], sizes: &[usize]) -> Vec<Vec<Op>> {
 }
 
 /// Applies each op once, in generation order, independently of the server.
-fn expected_state(ops: &[Op]) -> (Vec<Task>, Vec<TimeEntry>) {
+fn expected_state(ops: &[Op]) -> (Vec<Task>, Vec<TimeEntry>, Vec<Tag>) {
     let mut tasks = BTreeMap::new();
     let mut entries = BTreeMap::new();
+    let mut tags = BTreeMap::new();
     for op in ops {
         match &op.target {
             OpTarget::Task { task_id, change } => {
@@ -122,11 +141,16 @@ fn expected_state(ops: &[Op]) -> (Vec<Task>, Vec<TimeEntry>) {
                     .unwrap_or_else(|| TimeEntry::empty(*entry_id, *task_id));
                 entries.insert(*entry_id, entry.apply(change, op.hlc));
             }
+            OpTarget::Tag { tag_id, change } => {
+                let tag = tags.remove(tag_id).unwrap_or_else(|| Tag::empty(*tag_id));
+                tags.insert(*tag_id, tag.apply(change, op.hlc));
+            }
         }
     }
     (
         tasks.into_values().collect(),
         entries.into_values().collect(),
+        tags.into_values().collect(),
     )
 }
 
@@ -156,9 +180,10 @@ proptest! {
     ) {
         let snapshot = replay(LogId(1), &store_all(&batches));
 
-        let (tasks, time_entries) = expected_state(&ops);
+        let (tasks, time_entries, tags) = expected_state(&ops);
         prop_assert_eq!(snapshot.tasks, tasks);
         prop_assert_eq!(snapshot.time_entries, time_entries);
+        prop_assert_eq!(snapshot.tags, tags);
         let distinct = u64::try_from(ops.len()).unwrap();
         prop_assert_eq!(snapshot.seq, (distinct > 0).then_some(Seq(distinct)));
     }

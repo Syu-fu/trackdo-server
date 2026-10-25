@@ -4,14 +4,16 @@ use std::collections::BTreeMap;
 
 use trackdo_core::op::{LogId, Op, OpTarget, Seq};
 use trackdo_core::replica::Snapshot;
+use trackdo_core::tag::Tag;
 use trackdo_core::task::Task;
 use trackdo_core::time_entry::TimeEntry;
 
 /// Applies `log`, the ops of the log `log_id` in sequence order, to empty
-/// state. Tasks and time entries come out ordered by id.
+/// state. Tasks, time entries and tags come out ordered by id.
 pub fn replay(log_id: LogId, log: &[(Seq, Op)]) -> Snapshot {
     let mut tasks = BTreeMap::new();
     let mut entries = BTreeMap::new();
+    let mut tags = BTreeMap::new();
     for (_, op) in log {
         match &op.target {
             OpTarget::Task { task_id, change } => {
@@ -32,12 +34,17 @@ pub fn replay(log_id: LogId, log: &[(Seq, Op)]) -> Snapshot {
                     .unwrap_or_else(|| TimeEntry::empty(*entry_id, *task_id));
                 entries.insert(*entry_id, entry.apply(change, op.hlc));
             }
+            OpTarget::Tag { tag_id, change } => {
+                let tag = tags.remove(tag_id).unwrap_or_else(|| Tag::empty(*tag_id));
+                tags.insert(*tag_id, tag.apply(change, op.hlc));
+            }
         }
     }
     Snapshot {
         log_id,
         tasks: tasks.into_values().collect(),
         time_entries: entries.into_values().collect(),
+        tags: tags.into_values().collect(),
         seq: log.last().map(|(seq, _)| *seq),
     }
 }
@@ -47,6 +54,7 @@ mod tests {
     use trackdo_core::hlc::{DeviceId, Hlc};
     use trackdo_core::op::{LogId, Op, OpId, Seq};
     use trackdo_core::replica::Snapshot;
+    use trackdo_core::tag::{Tag, TagChange, TagId, TagName};
     use trackdo_core::task::{Task, TaskChange, TaskId, TaskStatus};
     use trackdo_core::time_entry::{TimeEntry, TimeEntryChange, TimeEntryId, Timestamp};
     use trackdo_core::title::Title;
@@ -87,6 +95,7 @@ mod tests {
                 log_id: LOG,
                 tasks: Vec::new(),
                 time_entries: Vec::new(),
+                tags: Vec::new(),
                 seq: None,
             }
         );
@@ -158,5 +167,32 @@ mod tests {
         let ids: Vec<TaskId> = replay(&log).tasks.iter().map(Task::id).collect();
 
         assert_eq!(ids, [TaskId(1), TaskId(2)]);
+    }
+
+    fn tag_name(s: &str) -> TagChange {
+        TagChange::Name(TagName::new(s).unwrap())
+    }
+
+    #[test]
+    fn applies_tag_writes_in_id_order() {
+        let log = [
+            (Seq(1), Op::tag(OpId(1), TagId(2), at(10), tag_name("b"))),
+            (Seq(2), Op::tag(OpId(2), TagId(1), at(10), tag_name("a"))),
+            (
+                Seq(3),
+                Op::tag(OpId(3), TagId(2), at(20), TagChange::Deleted(true)),
+            ),
+        ];
+
+        let snapshot = replay(&log);
+
+        let expected = [
+            Tag::empty(TagId(1)).apply(&tag_name("a"), at(10)),
+            Tag::empty(TagId(2))
+                .apply(&tag_name("b"), at(10))
+                .apply(&TagChange::Deleted(true), at(20)),
+        ];
+        assert_eq!(snapshot.tags, expected);
+        assert!(snapshot.tasks.is_empty());
     }
 }

@@ -4,8 +4,10 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::{Value, json};
 
+use trackdo_core::date::Date;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::op::{Op, OpId, Seq};
+use trackdo_core::tag::{TagChange, TagId, TagName};
 use trackdo_core::task::{TaskChange, TaskId};
 use trackdo_core::time_entry::{TimeEntryChange, TimeEntryId};
 use trackdo_core::title::Title;
@@ -76,6 +78,41 @@ async fn stores_ops_and_acknowledges_them() {
 }
 
 #[tokio::test]
+async fn stores_task_attributes_and_tags() {
+    let (app, store) = app().await;
+    let hlc = Hlc::new(1_000, 0, DeviceId(9));
+    let ops = [
+        Op::task(OpId(1), TaskId(7), hlc, TaskChange::Parent(Some(TaskId(8)))),
+        Op::task(
+            OpId(2),
+            TaskId(7),
+            hlc,
+            TaskChange::Due(Some(Date::new(2026, 10, 25).unwrap())),
+        ),
+        Op::task(
+            OpId(3),
+            TaskId(7),
+            hlc,
+            TaskChange::Tag {
+                tag: TagId(5),
+                tagged: true,
+            },
+        ),
+        Op::tag(
+            OpId(4),
+            TagId(5),
+            hlc,
+            TagChange::Name(TagName::new("work").unwrap()),
+        ),
+    ];
+
+    let reply = post_json(&app, &wire(&ops)).await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(stored(&store).await, ops);
+}
+
+#[tokio::test]
 async fn acknowledges_retransmissions_without_storing_them_again() {
     let (app, store) = app().await;
     post_json(&app, &wire(&[rename(1, "a")])).await;
@@ -107,7 +144,7 @@ async fn accepts_an_empty_batch() {
 async fn requires_a_token_before_reading_the_body() {
     let (app, _) = app().await;
     let request = Request::post("/ops")
-        .header("trackdo-protocol", "3")
+        .header("trackdo-protocol", "4")
         .body(Body::from("not json"))
         .unwrap();
 

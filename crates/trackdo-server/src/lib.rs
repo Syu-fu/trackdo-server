@@ -15,6 +15,6 @@ pub mod store;
 mod tests {
     #[test]
     fn speaks_the_pinned_protocol_version() {
-        assert_eq!(trackdo_protocol::PROTOCOL_VERSION, 3);
+        assert_eq!(trackdo_protocol::PROTOCOL_VERSION, 4);
     }
 }

@@ -1,7 +1,10 @@
 use proptest::prelude::*;
+use trackdo_core::date::Date;
 use trackdo_core::hlc::{DeviceId, Hlc};
+use trackdo_core::note::Note;
 use trackdo_core::op::{Op, OpId, Seq};
-use trackdo_core::task::{TaskChange, TaskId, TaskStatus};
+use trackdo_core::tag::{TagChange, TagId, TagName};
+use trackdo_core::task::{TaskChange, TaskId, TaskPriority, TaskStatus};
 use trackdo_core::time_entry::{TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
 
@@ -340,6 +343,39 @@ async fn reports_rows_no_valid_op_encodes_to() {
     assert!(matches!(result, Err(super::StoreError::Corrupt(1))));
 }
 
+/// Reading back `op` after `update` changed its stored row reports the row.
+async fn assert_corrupt_after(op: Op, update: &str) {
+    let store = Store::in_memory().await.unwrap();
+    store.append(USER, &[op]).await.unwrap();
+    sqlx::query(update).execute(&store.pool).await.unwrap();
+
+    let result = store.ops_after(USER, None, 10).await;
+
+    assert!(matches!(result, Err(StoreError::Corrupt(1))), "{result:?}");
+}
+
+#[tokio::test]
+async fn reports_notes_not_stored_as_written() {
+    let note = TaskChange::Note(Note::new("a").unwrap());
+
+    assert_corrupt_after(task_op(1, note), "UPDATE ops SET value_text = 'a '").await;
+}
+
+#[tokio::test]
+async fn reports_tag_names_not_stored_as_written() {
+    let name = TagChange::Name(TagName::new("a").unwrap());
+    let op = Op::tag(OpId(1), TagId(3), Hlc::new(1_000, 0, DeviceId(9)), name);
+
+    assert_corrupt_after(op, "UPDATE ops SET value_text = ' a'").await;
+}
+
+#[tokio::test]
+async fn reports_due_dates_out_of_range() {
+    let due = TaskChange::Due(Some(Date::new(2024, 1, 1).unwrap()));
+
+    assert_corrupt_after(task_op(1, due), "UPDATE ops SET value_text = '0000-01-01'").await;
+}
+
 fn any_hlc() -> impl Strategy<Value = Hlc> {
     (any::<u64>(), any::<u32>(), any::<u128>())
         .prop_map(|(wall, counter, device)| Hlc::new(wall, counter, DeviceId(device)))
@@ -350,6 +386,34 @@ fn any_task_change() -> impl Strategy<Value = TaskChange> {
         "[a-zあ-ん]{1,8}( [a-z]{1,8})?".prop_map(|s| TaskChange::Title(Title::new(&s).unwrap())),
         prop::sample::select(vec![TaskStatus::Todo, TaskStatus::Done]).prop_map(TaskChange::Status),
         any::<bool>().prop_map(TaskChange::Deleted),
+        prop::sample::select(vec![
+            TaskPriority::None,
+            TaskPriority::Low,
+            TaskPriority::Medium,
+            TaskPriority::High,
+        ])
+        .prop_map(TaskChange::Priority),
+        "[a-z \n\r]{0,12}".prop_map(|s| TaskChange::Note(Note::new(&s).unwrap())),
+        prop::option::of(any_date()).prop_map(TaskChange::Due),
+        prop::option::of(any::<u64>().prop_map(Timestamp)).prop_map(TaskChange::ScheduledAt),
+        prop::option::of(any::<u128>().prop_map(TaskId)).prop_map(TaskChange::Parent),
+        (any::<u128>(), any::<bool>()).prop_map(|(tag, tagged)| TaskChange::Tag {
+            tag: TagId(tag),
+            tagged,
+        }),
+    ]
+}
+
+fn any_date() -> impl Strategy<Value = Date> {
+    (1u16..=9999, 1u8..=12, 1u8..=31).prop_filter_map("not a date", |(year, month, day)| {
+        Date::new(year, month, day).ok()
+    })
+}
+
+fn any_tag_change() -> impl Strategy<Value = TagChange> {
+    prop_oneof![
+        "[a-zあ-ん]{1,8}( [a-z]{1,8})?".prop_map(|s| TagChange::Name(TagName::new(&s).unwrap())),
+        any::<bool>().prop_map(TagChange::Deleted),
     ]
 }
 
@@ -375,7 +439,9 @@ fn any_op() -> impl Strategy<Value = Op> {
         .prop_map(|(op, entry, task, hlc, change)| {
             Op::time_entry(OpId(op), TimeEntryId(entry), TaskId(task), hlc, change)
         });
-    prop_oneof![task, entry]
+    let tag = (any::<u128>(), any::<u128>(), any_hlc(), any_tag_change())
+        .prop_map(|(op, tag, hlc, change)| Op::tag(OpId(op), TagId(tag), hlc, change));
+    prop_oneof![task, entry, tag]
 }
 
 fn block_on<F: std::future::Future>(future: F) -> F::Output {
@@ -387,7 +453,7 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(64))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     #[test]
     fn stored_ops_read_back_unchanged(op in any_op()) {

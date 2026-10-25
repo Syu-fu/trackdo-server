@@ -7,6 +7,7 @@ use serde_json::json;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::op::{Op, OpId, Seq};
 use trackdo_core::replica::Snapshot;
+use trackdo_core::tag::{Tag, TagChange, TagId, TagName};
 use trackdo_core::task::{Task, TaskChange, TaskId, TaskStatus};
 use trackdo_core::time_entry::{TimeEntry, TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
@@ -17,6 +18,7 @@ use common::{LOG, LOG_UUID, Reply, app, authorized, send};
 
 const TASK: TaskId = TaskId(7);
 const ENTRY: TimeEntryId = TimeEntryId(0xe);
+const TAG: TagId = TagId(0x7a);
 
 fn at(wall: u64) -> Hlc {
     Hlc::new(wall, 0, DeviceId(9))
@@ -48,7 +50,7 @@ async fn empty_log_has_no_seq() {
     assert_eq!(reply.status, StatusCode::OK);
     assert_eq!(
         reply.json(),
-        json!({ "log_id": LOG_UUID, "seq": null, "tasks": [], "time_entries": [] })
+        json!({ "log_id": LOG_UUID, "seq": null, "tasks": [], "time_entries": [], "tags": [] })
     );
 }
 
@@ -56,6 +58,11 @@ async fn empty_log_has_no_seq() {
 async fn replays_the_log_as_of_its_last_seq() {
     let (app, store) = app().await;
     let started = TimeEntryChange::StartedAt(Timestamp(5));
+    let tagged = TaskChange::Tag {
+        tag: TAG,
+        tagged: true,
+    };
+    let named = TagChange::Name(TagName::new("work").unwrap());
     store
         .append(
             UserId::DEFAULT,
@@ -64,6 +71,8 @@ async fn replays_the_log_as_of_its_last_seq() {
                 Op::task(OpId(2), TASK, at(10), title("old")),
                 Op::task(OpId(3), TASK, at(30), TaskChange::Status(TaskStatus::Done)),
                 Op::time_entry(OpId(4), ENTRY, TASK, at(40), started.clone()),
+                Op::task(OpId(5), TASK, at(50), tagged.clone()),
+                Op::tag(OpId(6), TAG, at(60), named.clone()),
             ],
         )
         .await
@@ -73,7 +82,8 @@ async fn replays_the_log_as_of_its_last_seq() {
 
     let task = Task::empty(TASK)
         .apply(&title("new"), at(20))
-        .apply(&TaskChange::Status(TaskStatus::Done), at(30));
+        .apply(&TaskChange::Status(TaskStatus::Done), at(30))
+        .apply(&tagged, at(50));
     let entry = TimeEntry::empty(ENTRY, TASK).apply(&started, at(40));
     assert_eq!(
         snapshot,
@@ -81,7 +91,8 @@ async fn replays_the_log_as_of_its_last_seq() {
             log_id: LOG,
             tasks: vec![task],
             time_entries: vec![entry],
-            seq: Some(Seq(4)),
+            tags: vec![Tag::empty(TAG).apply(&named, at(60))],
+            seq: Some(Seq(6)),
         }
     );
 }

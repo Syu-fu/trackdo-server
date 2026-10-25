@@ -1,8 +1,11 @@
 //! Mapping between [`Op`] and rows of the `ops` table.
 
+use trackdo_core::date::Date;
 use trackdo_core::hlc::{DeviceId, Hlc};
+use trackdo_core::note::Note;
 use trackdo_core::op::{Op, OpId, OpTarget, Seq};
-use trackdo_core::task::{TaskChange, TaskId, TaskStatus};
+use trackdo_core::tag::{TagChange, TagId, TagName};
+use trackdo_core::task::{TaskChange, TaskId, TaskPriority, TaskStatus};
 use trackdo_core::time_entry::{TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
 
@@ -14,30 +17,92 @@ pub(super) struct OpRow {
     pub hlc_counter: i64,
     pub hlc_device: Vec<u8>,
     pub target: String,
-    pub task_id: Vec<u8>,
+    pub task_id: Option<Vec<u8>>,
     pub entry_id: Option<Vec<u8>>,
+    pub tag_id: Option<Vec<u8>>,
     pub field: String,
     pub value_text: Option<String>,
     pub value_int: Option<i64>,
+    pub value_id: Option<Vec<u8>>,
 }
 
-/// A field change as `(field, value_text, value_int)`.
-type Value = (&'static str, Option<String>, Option<i64>);
+/// The value columns of a row.
+#[derive(Default)]
+struct Value {
+    text: Option<String>,
+    int: Option<i64>,
+    id: Option<u128>,
+}
+
+impl Value {
+    fn text(text: &str) -> Self {
+        Self {
+            text: Some(text.to_owned()),
+            ..Self::default()
+        }
+    }
+
+    fn int(int: Option<i64>) -> Self {
+        Self {
+            int,
+            ..Self::default()
+        }
+    }
+
+    fn id(id: Option<u128>) -> Self {
+        Self {
+            id,
+            ..Self::default()
+        }
+    }
+
+    fn flag(flag: bool) -> Self {
+        Self::int(Some(i64::from(flag)))
+    }
+}
+
+/// The ids of the entity a row writes to.
+struct Keys {
+    task: Option<u128>,
+    entry: Option<u128>,
+    tag: Option<u128>,
+}
 
 impl OpRow {
     pub fn encode(seq: i64, op: &Op) -> Self {
-        let (target, task_id, entry_id, (field, value_text, value_int)) = match &op.target {
-            OpTarget::Task { task_id, change } => ("task", task_id.0, None, task_value(change)),
+        let (target, keys, (field, value)) = match &op.target {
+            OpTarget::Task { task_id, change } => {
+                let tag = match change {
+                    TaskChange::Tag { tag, .. } => Some(tag.0),
+                    _ => None,
+                };
+                let keys = Keys {
+                    task: Some(task_id.0),
+                    entry: None,
+                    tag,
+                };
+                ("task", keys, task_value(change))
+            }
             OpTarget::TimeEntry {
                 entry_id,
                 task_id,
                 change,
-            } => (
-                "time_entry",
-                task_id.0,
-                Some(entry_id.0),
-                entry_value(change),
-            ),
+            } => {
+                let keys = Keys {
+                    task: Some(task_id.0),
+                    entry: Some(entry_id.0),
+                    tag: None,
+                };
+                ("time_entry", keys, entry_value(change))
+            }
+            OpTarget::Tag { tag_id, change } => {
+                let keys = Keys {
+                    task: None,
+                    entry: None,
+                    tag: Some(tag_id.0),
+                };
+                ("tag", keys, tag_value(change))
+            }
         };
         Self {
             seq,
@@ -46,11 +111,13 @@ impl OpRow {
             hlc_counter: i64::from(op.hlc.counter()),
             hlc_device: id_bytes(op.hlc.device().0),
             target: target.to_owned(),
-            task_id: id_bytes(task_id),
-            entry_id: entry_id.map(id_bytes),
+            task_id: keys.task.map(id_bytes),
+            entry_id: keys.entry.map(id_bytes),
+            tag_id: keys.tag.map(id_bytes),
             field: field.to_owned(),
-            value_text,
-            value_int,
+            value_text: value.text,
+            value_int: value.int,
+            value_id: value.id.map(id_bytes),
         }
     }
 
@@ -62,78 +129,188 @@ impl OpRow {
             u32::try_from(self.hlc_counter).ok()?,
             DeviceId(id(&self.hlc_device)?),
         );
-        let task_id = TaskId(id(&self.task_id)?);
         let field = self.field.as_str();
-        let op = match (self.target.as_str(), &self.entry_id) {
-            ("task", None) => Op::task(
+        let value = Value {
+            text: self.value_text,
+            int: self.value_int,
+            id: nullable_id(self.value_id.as_deref())?,
+        };
+        let tag = nullable_id(self.tag_id.as_deref())?;
+        let op = match (self.target.as_str(), &self.task_id, &self.entry_id) {
+            ("task", Some(task_id), None) => Op::task(
                 op_id,
-                task_id,
+                TaskId(id(task_id)?),
                 hlc,
-                task_change(field, self.value_text, self.value_int)?,
+                task_change(field, tag.map(TagId), value)?,
             ),
-            ("time_entry", Some(entry_id)) => Op::time_entry(
+            ("time_entry", Some(task_id), Some(entry_id)) if tag.is_none() => Op::time_entry(
                 op_id,
                 TimeEntryId(id(entry_id)?),
-                task_id,
+                TaskId(id(task_id)?),
                 hlc,
-                entry_change(field, self.value_text, self.value_int)?,
+                entry_change(field, value)?,
             ),
+            ("tag", None, None) => Op::tag(op_id, TagId(tag?), hlc, tag_change(field, value)?),
             _ => return None,
         };
         Some((Seq(u64::try_from(self.seq).ok()?), op))
     }
 }
 
-fn task_value(change: &TaskChange) -> Value {
+fn task_value(change: &TaskChange) -> (&'static str, Value) {
     match change {
-        TaskChange::Title(title) => ("title", Some(title.as_str().to_owned()), None),
-        TaskChange::Status(TaskStatus::Todo) => ("status", Some("todo".to_owned()), None),
-        TaskChange::Status(TaskStatus::Done) => ("status", Some("done".to_owned()), None),
-        TaskChange::Deleted(deleted) => ("deleted", None, Some(i64::from(*deleted))),
+        TaskChange::Title(title) => ("title", Value::text(title.as_str())),
+        TaskChange::Status(status) => ("status", Value::text(status_text(*status))),
+        TaskChange::Deleted(deleted) => ("deleted", Value::flag(*deleted)),
+        TaskChange::Priority(priority) => ("priority", Value::text(priority_text(*priority))),
+        TaskChange::Note(note) => ("note", Value::text(note.as_str())),
+        TaskChange::Due(due) => (
+            "due",
+            due.map_or_else(Value::default, |due| Value::text(&date_text(due))),
+        ),
+        TaskChange::ScheduledAt(scheduled) => (
+            "scheduled_at",
+            Value::int(scheduled.map(|Timestamp(scheduled)| to_i64(scheduled))),
+        ),
+        TaskChange::Parent(parent) => ("parent", Value::id(parent.map(|TaskId(parent)| parent))),
+        // The tag itself goes into the `tag_id` key column.
+        TaskChange::Tag { tagged, .. } => ("tag", Value::flag(*tagged)),
     }
 }
 
-fn entry_value(change: &TimeEntryChange) -> Value {
+fn entry_value(change: &TimeEntryChange) -> (&'static str, Value) {
     match change {
         TimeEntryChange::StartedAt(Timestamp(started)) => {
-            ("started_at", None, Some(to_i64(*started)))
+            ("started_at", Value::int(Some(to_i64(*started))))
         }
         TimeEntryChange::StoppedAt(stopped) => (
             "stopped_at",
-            None,
-            stopped.map(|Timestamp(stopped)| to_i64(stopped)),
+            Value::int(stopped.map(|Timestamp(stopped)| to_i64(stopped))),
         ),
-        TimeEntryChange::Deleted(deleted) => ("deleted", None, Some(i64::from(*deleted))),
+        TimeEntryChange::Deleted(deleted) => ("deleted", Value::flag(*deleted)),
     }
 }
 
-fn task_change(field: &str, text: Option<String>, int: Option<i64>) -> Option<TaskChange> {
-    match (field, text, int) {
-        ("title", Some(title), None) => {
-            let decoded = Title::new(&title).ok()?;
-            (decoded.as_str() == title).then_some(TaskChange::Title(decoded))
+fn tag_value(change: &TagChange) -> (&'static str, Value) {
+    match change {
+        TagChange::Name(name) => ("name", Value::text(name.as_str())),
+        TagChange::Deleted(deleted) => ("deleted", Value::flag(*deleted)),
+    }
+}
+
+/// `tag` is the row's `tag_id`, which only `tag` changes have.
+fn task_change(field: &str, tag: Option<TagId>, value: Value) -> Option<TaskChange> {
+    let Value { text, int, id } = value;
+    match (field, tag, text, int, id) {
+        ("title", None, Some(title), None, None) => {
+            canonical(&title, Title::new, Title::as_str).map(TaskChange::Title)
         }
-        ("status", Some(status), None) => match status.as_str() {
-            "todo" => Some(TaskChange::Status(TaskStatus::Todo)),
-            "done" => Some(TaskChange::Status(TaskStatus::Done)),
-            _ => None,
-        },
-        ("deleted", None, Some(deleted)) => flag(deleted).map(TaskChange::Deleted),
+        ("status", None, Some(status), None, None) => status_from(&status).map(TaskChange::Status),
+        ("deleted", None, None, Some(deleted), None) => flag(deleted).map(TaskChange::Deleted),
+        ("priority", None, Some(priority), None, None) => {
+            priority_from(&priority).map(TaskChange::Priority)
+        }
+        ("note", None, Some(note), None, None) => {
+            canonical(&note, Note::new, Note::as_str).map(TaskChange::Note)
+        }
+        ("due", None, None, None, None) => Some(TaskChange::Due(None)),
+        ("due", None, Some(due), None, None) => {
+            date_from(&due).map(|due| TaskChange::Due(Some(due)))
+        }
+        ("scheduled_at", None, None, scheduled, None) => Some(TaskChange::ScheduledAt(
+            scheduled.map(|scheduled| Timestamp(to_u64(scheduled))),
+        )),
+        ("parent", None, None, None, parent) => Some(TaskChange::Parent(parent.map(TaskId))),
+        ("tag", Some(tag), None, Some(tagged), None) => {
+            flag(tagged).map(|tagged| TaskChange::Tag { tag, tagged })
+        }
         _ => None,
     }
 }
 
-fn entry_change(field: &str, text: Option<String>, int: Option<i64>) -> Option<TimeEntryChange> {
-    match (field, text, int) {
-        ("started_at", None, Some(started)) => {
+fn entry_change(field: &str, value: Value) -> Option<TimeEntryChange> {
+    let Value { text, int, id } = value;
+    match (field, text, int, id) {
+        ("started_at", None, Some(started), None) => {
             Some(TimeEntryChange::StartedAt(Timestamp(to_u64(started))))
         }
-        ("stopped_at", None, stopped) => Some(TimeEntryChange::StoppedAt(
+        ("stopped_at", None, stopped, None) => Some(TimeEntryChange::StoppedAt(
             stopped.map(|stopped| Timestamp(to_u64(stopped))),
         )),
-        ("deleted", None, Some(deleted)) => flag(deleted).map(TimeEntryChange::Deleted),
+        ("deleted", None, Some(deleted), None) => flag(deleted).map(TimeEntryChange::Deleted),
         _ => None,
     }
+}
+
+fn tag_change(field: &str, value: Value) -> Option<TagChange> {
+    let Value { text, int, id } = value;
+    match (field, text, int, id) {
+        ("name", Some(name), None, None) => {
+            canonical(&name, TagName::new, TagName::as_str).map(TagChange::Name)
+        }
+        ("deleted", None, Some(deleted), None) => flag(deleted).map(TagChange::Deleted),
+        _ => None,
+    }
+}
+
+/// Builds a value from stored text, only if building it keeps the text as
+/// is, so stored values stay canonical.
+fn canonical<T, E>(
+    text: &str,
+    new: impl Fn(&str) -> Result<T, E>,
+    as_str: impl Fn(&T) -> &str,
+) -> Option<T> {
+    new(text).ok().filter(|value| as_str(value) == text)
+}
+
+const fn status_text(status: TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Todo => "todo",
+        TaskStatus::Done => "done",
+    }
+}
+
+fn status_from(text: &str) -> Option<TaskStatus> {
+    match text {
+        "todo" => Some(TaskStatus::Todo),
+        "done" => Some(TaskStatus::Done),
+        _ => None,
+    }
+}
+
+const fn priority_text(priority: TaskPriority) -> &'static str {
+    match priority {
+        TaskPriority::None => "none",
+        TaskPriority::Low => "low",
+        TaskPriority::Medium => "medium",
+        TaskPriority::High => "high",
+    }
+}
+
+fn priority_from(text: &str) -> Option<TaskPriority> {
+    match text {
+        "none" => Some(TaskPriority::None),
+        "low" => Some(TaskPriority::Low),
+        "medium" => Some(TaskPriority::Medium),
+        "high" => Some(TaskPriority::High),
+        _ => None,
+    }
+}
+
+/// `YYYY-MM-DD`, as on the wire.
+fn date_text(date: Date) -> String {
+    format!("{:04}-{:02}-{:02}", date.year(), date.month(), date.day())
+}
+
+fn date_from(text: &str) -> Option<Date> {
+    let mut parts = text.splitn(3, '-').map(str::parse::<u16>);
+    let (year, month, day) = (
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+    );
+    let date = Date::new(year, u8::try_from(month).ok()?, u8::try_from(day).ok()?).ok()?;
+    (date_text(date) == text).then_some(date)
 }
 
 fn flag(value: i64) -> Option<bool> {
@@ -151,6 +328,11 @@ pub(super) fn id_bytes(id: u128) -> Vec<u8> {
 
 pub(super) fn id(bytes: &[u8]) -> Option<u128> {
     Some(u128::from_be_bytes(bytes.try_into().ok()?))
+}
+
+/// `Some(None)` for NULL, `None` for bytes that are no id.
+fn nullable_id(bytes: Option<&[u8]>) -> Option<Option<u128>> {
+    bytes.map_or(Some(None), |bytes| id(bytes).map(Some))
 }
 
 /// Lossless bit-cast; SQLite integers are signed.

@@ -15,7 +15,7 @@ async fn healthz_needs_no_token_and_reports_the_protocol() {
     assert_eq!(reply.status, StatusCode::OK);
     assert_eq!(
         reply.json(),
-        json!({ "status": "ok", "protocol_version": 3 })
+        json!({ "status": "ok", "protocol_version": 4 })
     );
 }
 
@@ -26,7 +26,7 @@ async fn every_response_names_the_protocol_version() {
     let found = send(&app, Request::get("/healthz").body(Body::empty()).unwrap()).await;
     let missing = send(&app, Request::get("/nowhere").body(Body::empty()).unwrap()).await;
 
-    assert_eq!(found.headers["trackdo-protocol"], "3");
+    assert_eq!(found.headers["trackdo-protocol"], "4");
     assert_eq!(missing.status, StatusCode::NOT_FOUND);
-    assert_eq!(missing.headers["trackdo-protocol"], "3");
+    assert_eq!(missing.headers["trackdo-protocol"], "4");
 }
