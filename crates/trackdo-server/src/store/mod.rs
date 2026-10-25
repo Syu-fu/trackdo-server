@@ -64,16 +64,7 @@ impl Store {
 
     /// A private database that lives as long as the store.
     pub async fn in_memory() -> Result<Self, StoreError> {
-        // Every connection would get its own in-memory database, so keep
-        // exactly one open for good.
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .min_connections(1)
-            .idle_timeout(None)
-            .max_lifetime(None)
-            .connect_with(SqliteConnectOptions::from_str("sqlite::memory:")?)
-            .await?;
-        Self::migrated(pool).await
+        Self::migrated(memory_pool().await?).await
     }
 
     async fn migrated(pool: SqlitePool) -> Result<Self, StoreError> {
@@ -147,6 +138,19 @@ impl Store {
     }
 }
 
+/// An empty in-memory database, not migrated yet.
+async fn memory_pool() -> Result<SqlitePool, sqlx::Error> {
+    // Every connection would get its own in-memory database, so keep exactly
+    // one open for good.
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .min_connections(1)
+        .idle_timeout(None)
+        .max_lifetime(None)
+        .connect_with(SqliteConnectOptions::from_str("sqlite::memory:")?)
+        .await
+}
+
 /// Inserts `row` unless its op id is already stored. Returns whether it was.
 async fn insert(
     conn: &mut SqliteConnection,
@@ -209,5 +213,7 @@ async fn check_entry_task(
     }
 }
 
+#[cfg(test)]
+mod migration_tests;
 #[cfg(test)]
 mod tests;
