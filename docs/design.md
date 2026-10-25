@@ -70,7 +70,7 @@ the log they know; a position in another log is refused, so they resync.
 | 401 | `unauthorized` | Token missing or unknown (with `WWW-Authenticate: Bearer`) |
 | 409 | `task_mismatch` | A time entry op names a different task than the entry's first stored op |
 | 410 | `resync_required` | `Last-Event-ID` names another log, or a seq ahead of this one |
-| 413 | `too_large` | More than 500 ops or a body over 2 MiB |
+| 413 | `too_large` | More than 500 ops, or a body larger than any 500 valid ops can be |
 | 422 | `invalid_op` | `TryFrom<OpDto> for Op` failed, e.g. a non-canonical title |
 | 500 | `internal` | Anything else; details are logged, not returned |
 
@@ -81,9 +81,9 @@ check the URL and compatibility before asking for a token.
 
 ### `POST /ops`
 
-- Body: a JSON array of `OpDto`, at most 500 items and 2 MiB. Notes can be
-  up to 10,000 characters, so clients split batches by size as well as by
-  count.
+- Body: a JSON array of `OpDto`, at most 500 items. Clients split batches by
+  count only: the body limit (about 30 MB) fits 500 ops whose notes are
+  10,000 characters that each take six bytes in JSON (`\u0001`).
 - The batch is atomic: if any op is invalid or mismatches its entry's task,
   nothing is stored and the error names the first offending `op_id`.
 - Ops are deduplicated by `op_id` per user. Retransmitted ops are not stored
