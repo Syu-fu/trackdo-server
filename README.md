@@ -28,7 +28,7 @@ and linux/arm64. Run exactly one instance, with `/data` on persistent storage:
 ```sh
 docker run -d -p 8080:8080 -v trackdo:/data \
   -e TRACKDO_TOKEN_HASHES="$TRACKDO_TOKEN_HASHES" \
-  ghcr.io/syu-fu/trackdo-server:0.2
+  ghcr.io/syu-fu/trackdo-server:0.3
 ```
 
 Put TLS in front (a reverse proxy or tunnel), point health checks at

@@ -1876,7 +1876,7 @@ dependencies = [
 
 [[package]]
 name = "trackdo-server"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "axum",
  "futures-util",
