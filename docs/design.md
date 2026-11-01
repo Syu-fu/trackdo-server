@@ -7,7 +7,7 @@ The server never holds a `Replica`; replaying the log to build a snapshot is
 its only use of domain logic (`Task::apply` / `TimeEntry::apply` /
 `Tag::apply`).
 
-The wire format is `trackdo-protocol` v0.4.0 (`PROTOCOL_VERSION = 4`).
+The wire format is `trackdo-protocol` v0.5.0 (`PROTOCOL_VERSION = 5`).
 Subtask trees, cycle breaking and hidden deleted tags are derived on the
 clients too; the server stores and replays task, time entry and tag ops alike.
 
@@ -26,10 +26,10 @@ clients too; the server stores and replays task, time entry and tag ops alike.
 
 ## Protocol version
 
-- Authenticated requests must send `Trackdo-Protocol: 4`. A missing or
+- Authenticated requests must send `Trackdo-Protocol: 5`. A missing or
   different value is rejected with `400 unsupported_protocol_version`.
   Authentication is checked first.
-- Every response carries `Trackdo-Protocol: 4`, so a client can tell whether
+- Every response carries `Trackdo-Protocol: 5`, so a client can tell whether
   the app or the server needs updating.
 - Only an exact match is accepted.
 
@@ -76,7 +76,7 @@ the log they know; a position in another log is refused, so they resync.
 
 ### `GET /healthz`
 
-Unauthenticated. Returns `{"status":"ok","protocol_version":4}` so apps can
+Unauthenticated. Returns `{"status":"ok","protocol_version":5}` so apps can
 check the URL and compatibility before asking for a token.
 
 ### `POST /ops`
@@ -144,7 +144,8 @@ CREATE TABLE ops (
   entry_id    BLOB,               -- time entry ops
   tag_id      BLOB,               -- tag ops, and the tag of a task 'tag' op
   field       TEXT    NOT NULL,
-  value_text  TEXT,               -- title, status, priority, note, due, tag name
+  value_text  TEXT,               -- title, status, priority, note, due, tag name,
+                                  -- tag color; NULL due/color = cleared
   value_int   INTEGER,            -- times in ms, flags as 0/1; NULL stop = running
   value_id    BLOB,               -- parent; NULL = top level
   PRIMARY KEY (user_id, seq),
@@ -160,14 +161,17 @@ CREATE INDEX ops_entry ON ops (user_id, entry_id, seq) WHERE entry_id IS NOT NUL
 - An entry's task is the `task_id` of its first stored op, looked up through
   `ops_entry`. Mismatches within a single batch are rejected too.
 - `u64` values (HLC wall time, timestamps) are bit-cast to `i64`, which is
-  lossless; SQL never orders by them. Due dates are stored as `YYYY-MM-DD`.
+  lossless; SQL never orders by them. Due dates are stored as `YYYY-MM-DD`,
+  tag colors by their wire name (`red`, ..., `gray`).
 - The `CHECK` treats a `NULL` result as a failure, so a missing value never
   slips through a comparison.
 - Rows are decoded back through the core types (`Title`, `Note`, `TagName`,
   `Date`), and a stored value those would change is reported as corrupt
   rather than served.
-- Migration `0002` rebuilt `ops` for trackdo-core v0.4.0, since SQLite cannot
-  change a `CHECK` in place, and copied every existing row unchanged.
+- Migrations `0002` (trackdo-core v0.4.0) and `0003` (v0.5.0, tag colors)
+  each rebuilt `ops`, since SQLite cannot change a `CHECK` in place, and
+  copied every existing row unchanged. A build script rebuilds the server
+  when a migration changes, as `sqlx::migrate!` embeds them.
 
 ### Not done (yet)
 
