@@ -9,7 +9,7 @@ use proptest::sample::Index;
 
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::op::{LogId, Op, OpId, OpTarget, Seq};
-use trackdo_core::tag::{Tag, TagChange, TagId, TagName};
+use trackdo_core::tag::{Tag, TagChange, TagColor, TagId, TagName};
 use trackdo_core::task::{Task, TaskChange, TaskId, TaskStatus};
 use trackdo_core::time_entry::{TimeEntry, TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
@@ -43,6 +43,8 @@ fn any_tag_change() -> impl Strategy<Value = TagChange> {
         prop::sample::select(vec!["a", "b"])
             .prop_map(|name| TagChange::Name(TagName::new(name).unwrap())),
         any::<bool>().prop_map(TagChange::Deleted),
+        prop::option::of(prop::sample::select(vec![TagColor::Red, TagColor::Blue]))
+            .prop_map(TagChange::Color),
     ]
 }
 

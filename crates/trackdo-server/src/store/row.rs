@@ -4,7 +4,7 @@ use trackdo_core::date::Date;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::note::Note;
 use trackdo_core::op::{Op, OpId, OpTarget, Seq};
-use trackdo_core::tag::{TagChange, TagId, TagName};
+use trackdo_core::tag::{TagChange, TagColor, TagId, TagName};
 use trackdo_core::task::{TaskChange, TaskId, TaskPriority, TaskStatus};
 use trackdo_core::time_entry::{TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
@@ -195,6 +195,10 @@ fn tag_value(change: &TagChange) -> (&'static str, Value) {
     match change {
         TagChange::Name(name) => ("name", Value::text(name.as_str())),
         TagChange::Deleted(deleted) => ("deleted", Value::flag(*deleted)),
+        TagChange::Color(color) => (
+            "color",
+            color.map_or_else(Value::default, |color| Value::text(color_text(color))),
+        ),
     }
 }
 
@@ -249,6 +253,10 @@ fn tag_change(field: &str, value: Value) -> Option<TagChange> {
             canonical(&name, TagName::new, TagName::as_str).map(TagChange::Name)
         }
         ("deleted", None, Some(deleted), None) => flag(deleted).map(TagChange::Deleted),
+        ("color", None, None, None) => Some(TagChange::Color(None)),
+        ("color", Some(color), None, None) => {
+            color_from(&color).map(|color| TagChange::Color(Some(color)))
+        }
         _ => None,
     }
 }
@@ -295,6 +303,25 @@ fn priority_from(text: &str) -> Option<TaskPriority> {
         "high" => Some(TaskPriority::High),
         _ => None,
     }
+}
+
+const fn color_text(color: TagColor) -> &'static str {
+    match color {
+        TagColor::Red => "red",
+        TagColor::Orange => "orange",
+        TagColor::Yellow => "yellow",
+        TagColor::Green => "green",
+        TagColor::Blue => "blue",
+        TagColor::Purple => "purple",
+        TagColor::Pink => "pink",
+        TagColor::Gray => "gray",
+    }
+}
+
+fn color_from(text: &str) -> Option<TagColor> {
+    TagColor::ALL
+        .into_iter()
+        .find(|color| color_text(*color) == text)
 }
 
 /// `YYYY-MM-DD`, as on the wire.

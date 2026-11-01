@@ -7,7 +7,7 @@ use serde_json::json;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::op::{Op, OpId, Seq};
 use trackdo_core::replica::Snapshot;
-use trackdo_core::tag::{Tag, TagChange, TagId, TagName};
+use trackdo_core::tag::{Tag, TagChange, TagColor, TagId, TagName};
 use trackdo_core::task::{Task, TaskChange, TaskId, TaskStatus};
 use trackdo_core::time_entry::{TimeEntry, TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
@@ -63,6 +63,7 @@ async fn replays_the_log_as_of_its_last_seq() {
         tagged: true,
     };
     let named = TagChange::Name(TagName::new("work").unwrap());
+    let colored = TagChange::Color(Some(TagColor::Green));
     store
         .append(
             UserId::DEFAULT,
@@ -73,6 +74,7 @@ async fn replays_the_log_as_of_its_last_seq() {
                 Op::time_entry(OpId(4), ENTRY, TASK, at(40), started.clone()),
                 Op::task(OpId(5), TASK, at(50), tagged.clone()),
                 Op::tag(OpId(6), TAG, at(60), named.clone()),
+                Op::tag(OpId(7), TAG, at(70), colored.clone()),
             ],
         )
         .await
@@ -91,8 +93,12 @@ async fn replays_the_log_as_of_its_last_seq() {
             log_id: LOG,
             tasks: vec![task],
             time_entries: vec![entry],
-            tags: vec![Tag::empty(TAG).apply(&named, at(60))],
-            seq: Some(Seq(6)),
+            tags: vec![
+                Tag::empty(TAG)
+                    .apply(&named, at(60))
+                    .apply(&colored, at(70))
+            ],
+            seq: Some(Seq(7)),
         }
     );
 }

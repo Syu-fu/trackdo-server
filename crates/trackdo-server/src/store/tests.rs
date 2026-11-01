@@ -3,7 +3,7 @@ use trackdo_core::date::Date;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::note::Note;
 use trackdo_core::op::{Op, OpId, Seq};
-use trackdo_core::tag::{TagChange, TagId, TagName};
+use trackdo_core::tag::{TagChange, TagColor, TagId, TagName};
 use trackdo_core::task::{TaskChange, TaskId, TaskPriority, TaskStatus};
 use trackdo_core::time_entry::{TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
@@ -414,6 +414,7 @@ fn any_tag_change() -> impl Strategy<Value = TagChange> {
     prop_oneof![
         "[a-zあ-ん]{1,8}( [a-z]{1,8})?".prop_map(|s| TagChange::Name(TagName::new(&s).unwrap())),
         any::<bool>().prop_map(TagChange::Deleted),
+        prop::option::of(prop::sample::select(TagColor::ALL.to_vec())).prop_map(TagChange::Color),
     ]
 }
 
