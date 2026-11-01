@@ -58,18 +58,22 @@ const fn entry(field: &'static str, value_int: Option<i64>) -> Row {
     }
 }
 
-/// A database with only the first migration applied, as servers up to v0.2
-/// left it.
-async fn v1_pool() -> SqlitePool {
+/// A database with the migrations up to `version` applied.
+async fn pool_at(version: i64) -> SqlitePool {
     let pool = memory_pool().await.unwrap();
     let migrator = sqlx::migrate!();
-    let first = migrator.iter().next().unwrap();
-    assert_eq!(first.version, 1);
     let mut conn = pool.acquire().await.unwrap();
     conn.ensure_migrations_table().await.unwrap();
-    conn.apply(first).await.unwrap();
+    for migration in migrator.iter().filter(|m| m.version <= version) {
+        conn.apply(migration).await.unwrap();
+    }
     drop(conn);
     pool
+}
+
+/// As servers up to v0.2 left the database.
+async fn v1_pool() -> SqlitePool {
+    pool_at(1).await
 }
 
 async fn migrated_pool() -> SqlitePool {
@@ -199,7 +203,7 @@ const fn without_task(row: Row) -> Row {
 }
 
 /// Every shape a valid op is stored as.
-const ACCEPTED: [Row; 23] = [
+const ACCEPTED: [Row; 32] = [
     V1_ROWS[0],
     V1_ROWS[1],
     V1_ROWS[2],
@@ -223,9 +227,18 @@ const ACCEPTED: [Row; 23] = [
     with_tag(task("tag", None, Some(0))),
     tag("name", Some("work"), None),
     tag("deleted", None, Some(1)),
+    tag("color", Some("red"), None),
+    tag("color", Some("orange"), None),
+    tag("color", Some("yellow"), None),
+    tag("color", Some("green"), None),
+    tag("color", Some("blue"), None),
+    tag("color", Some("purple"), None),
+    tag("color", Some("pink"), None),
+    tag("color", Some("gray"), None),
+    tag("color", None, None),
 ];
 
-const REJECTED: [Row; 18] = [
+const REJECTED: [Row; 21] = [
     without_task(task("title", Some("a"), None)),
     with_tag(task("title", Some("a"), None)),
     with_value_id(task("title", Some("a"), None)),
@@ -247,7 +260,50 @@ const REJECTED: [Row; 18] = [
     }),
     tag("name", None, None),
     tag("deleted", None, Some(2)),
+    tag("color", Some("teal"), None),
+    tag("color", Some("Red"), None),
+    tag("color", None, Some(0)),
 ];
+
+/// Every row with every column as an SQL literal, in seq order.
+async fn dump(pool: &SqlitePool) -> Vec<String> {
+    let columns = [
+        "user_id",
+        "seq",
+        "op_id",
+        "hlc_wall_ms",
+        "hlc_counter",
+        "hlc_device",
+        "target",
+        "task_id",
+        "entry_id",
+        "tag_id",
+        "field",
+        "value_text",
+        "value_int",
+        "value_id",
+    ]
+    .map(|column| format!("quote({column})"))
+    .join(" || ',' || ");
+    sqlx::query_scalar(&format!("SELECT {columns} FROM ops ORDER BY user_id, seq"))
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn keeps_the_ops_stored_by_v0_3() {
+    let pool = pool_at(2).await;
+    let v0_3_rows = &ACCEPTED[..23];
+    for (seq, row) in (1..).zip(v0_3_rows) {
+        insert(&pool, seq, *row).await.unwrap();
+    }
+    let before = dump(&pool).await;
+
+    sqlx::migrate!().run(&pool).await.unwrap();
+
+    assert_eq!(dump(&pool).await, before);
+}
 
 #[tokio::test]
 async fn accepts_every_kind_of_op() {
