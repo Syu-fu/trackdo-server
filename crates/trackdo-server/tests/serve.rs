@@ -108,7 +108,7 @@ async fn shuts_down_while_event_streams_are_open() {
             "GET /events HTTP/1.1",
             "Host: test",
             "Authorization: Bearer secret",
-            "Trackdo-Protocol: 5",
+            "Trackdo-Protocol: 6",
         ],
     )
     .await;
@@ -135,7 +135,7 @@ async fn snapshot_log_id(addr: SocketAddr) -> String {
             "GET /snapshot HTTP/1.1",
             "Host: test",
             "Authorization: Bearer secret",
-            "Trackdo-Protocol: 5",
+            "Trackdo-Protocol: 6",
             "Connection: close",
         ],
     )

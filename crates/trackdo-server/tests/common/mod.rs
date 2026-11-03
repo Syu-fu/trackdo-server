@@ -47,7 +47,7 @@ pub fn authorized(method: &str, uri: &str) -> axum::http::request::Builder {
         .method(method)
         .uri(uri)
         .header("authorization", format!("Bearer {TOKEN}"))
-        .header("trackdo-protocol", "5")
+        .header("trackdo-protocol", "6")
 }
 
 pub struct Reply {

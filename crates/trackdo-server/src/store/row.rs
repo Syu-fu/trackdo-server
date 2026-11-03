@@ -4,10 +4,12 @@ use trackdo_core::date::Date;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::note::Note;
 use trackdo_core::op::{Op, OpId, OpTarget, Seq};
+use trackdo_core::recurrence::Recurrence;
 use trackdo_core::tag::{TagChange, TagColor, TagId, TagName};
 use trackdo_core::task::{TaskChange, TaskId, TaskPriority, TaskStatus};
 use trackdo_core::time_entry::{TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
+use trackdo_protocol::recurrence::{RecurrenceBasisDto, RecurrenceDto};
 
 #[derive(Debug, sqlx::FromRow)]
 pub(super) struct OpRow {
@@ -24,6 +26,8 @@ pub(super) struct OpRow {
     pub value_text: Option<String>,
     pub value_int: Option<i64>,
     pub value_id: Option<Vec<u8>>,
+    pub recurrence_start: Option<String>,
+    pub recurrence_basis: Option<String>,
 }
 
 /// The value columns of a row.
@@ -32,6 +36,9 @@ struct Value {
     text: Option<String>,
     int: Option<i64>,
     id: Option<u128>,
+    /// Only recurrences use these, with their rule in `text`.
+    start: Option<String>,
+    basis: Option<String>,
 }
 
 impl Value {
@@ -58,6 +65,16 @@ impl Value {
 
     fn flag(flag: bool) -> Self {
         Self::int(Some(i64::from(flag)))
+    }
+
+    fn recurrence(recurrence: &Recurrence) -> Self {
+        let RecurrenceDto { rule, start, basis } = RecurrenceDto::from(recurrence);
+        Self {
+            text: Some(rule),
+            start: Some(start),
+            basis: Some(basis_text(basis).to_owned()),
+            ..Self::default()
+        }
     }
 }
 
@@ -118,6 +135,8 @@ impl OpRow {
             value_text: value.text,
             value_int: value.int,
             value_id: value.id.map(id_bytes),
+            recurrence_start: value.start,
+            recurrence_basis: value.basis,
         }
     }
 
@@ -134,6 +153,8 @@ impl OpRow {
             text: self.value_text,
             int: self.value_int,
             id: nullable_id(self.value_id.as_deref())?,
+            start: self.recurrence_start,
+            basis: self.recurrence_basis,
         };
         let tag = nullable_id(self.tag_id.as_deref())?;
         let op = match (self.target.as_str(), &self.task_id, &self.entry_id) {
@@ -175,6 +196,12 @@ fn task_value(change: &TaskChange) -> (&'static str, Value) {
         TaskChange::Parent(parent) => ("parent", Value::id(parent.map(|TaskId(parent)| parent))),
         // The tag itself goes into the `tag_id` key column.
         TaskChange::Tag { tagged, .. } => ("tag", Value::flag(*tagged)),
+        TaskChange::Recurrence(recurrence) => (
+            "recurrence",
+            recurrence
+                .as_ref()
+                .map_or_else(Value::default, Value::recurrence),
+        ),
     }
 }
 
@@ -204,7 +231,22 @@ fn tag_value(change: &TagChange) -> (&'static str, Value) {
 
 /// `tag` is the row's `tag_id`, which only `tag` changes have.
 fn task_change(field: &str, tag: Option<TagId>, value: Value) -> Option<TaskChange> {
-    let Value { text, int, id } = value;
+    let Value {
+        text,
+        int,
+        id,
+        start,
+        basis,
+    } = value;
+    if field == "recurrence" {
+        return match (tag, int, id) {
+            (None, None, None) => recurrence_from(text, start, basis).map(TaskChange::Recurrence),
+            _ => None,
+        };
+    }
+    let (None, None) = (start, basis) else {
+        return None;
+    };
     match (field, tag, text, int, id) {
         ("title", None, Some(title), None, None) => {
             canonical(&title, Title::new, Title::as_str).map(TaskChange::Title)
@@ -233,7 +275,16 @@ fn task_change(field: &str, tag: Option<TagId>, value: Value) -> Option<TaskChan
 }
 
 fn entry_change(field: &str, value: Value) -> Option<TimeEntryChange> {
-    let Value { text, int, id } = value;
+    let Value {
+        text,
+        int,
+        id,
+        start: None,
+        basis: None,
+    } = value
+    else {
+        return None;
+    };
     match (field, text, int, id) {
         ("started_at", None, Some(started), None) => {
             Some(TimeEntryChange::StartedAt(Timestamp(to_u64(started))))
@@ -247,7 +298,16 @@ fn entry_change(field: &str, value: Value) -> Option<TimeEntryChange> {
 }
 
 fn tag_change(field: &str, value: Value) -> Option<TagChange> {
-    let Value { text, int, id } = value;
+    let Value {
+        text,
+        int,
+        id,
+        start: None,
+        basis: None,
+    } = value
+    else {
+        return None;
+    };
     match (field, text, int, id) {
         ("name", Some(name), None, None) => {
             canonical(&name, TagName::new, TagName::as_str).map(TagChange::Name)
@@ -259,6 +319,27 @@ fn tag_change(field: &str, value: Value) -> Option<TagChange> {
         }
         _ => None,
     }
+}
+
+/// `Some(None)` when all three are NULL. Like other stored text, the parts
+/// must read back exactly as written, so a rule stays in canonical form.
+fn recurrence_from(
+    rule: Option<String>,
+    start: Option<String>,
+    basis: Option<String>,
+) -> Option<Option<Recurrence>> {
+    let (rule, start, basis) = match (rule, start, basis) {
+        (None, None, None) => return Some(None),
+        (Some(rule), Some(start), Some(basis)) => (rule, start, basis),
+        _ => return None,
+    };
+    let dto = RecurrenceDto {
+        rule,
+        start,
+        basis: basis_from(&basis)?,
+    };
+    let recurrence = Recurrence::try_from(dto.clone()).ok()?;
+    (RecurrenceDto::from(&recurrence) == dto).then_some(Some(recurrence))
 }
 
 /// Builds a value from stored text, only if building it keeps the text as
@@ -322,6 +403,21 @@ fn color_from(text: &str) -> Option<TagColor> {
     TagColor::ALL
         .into_iter()
         .find(|color| color_text(*color) == text)
+}
+
+const fn basis_text(basis: RecurrenceBasisDto) -> &'static str {
+    match basis {
+        RecurrenceBasisDto::Due => "due",
+        RecurrenceBasisDto::Completion => "completion",
+    }
+}
+
+fn basis_from(text: &str) -> Option<RecurrenceBasisDto> {
+    match text {
+        "due" => Some(RecurrenceBasisDto::Due),
+        "completion" => Some(RecurrenceBasisDto::Completion),
+        _ => None,
+    }
 }
 
 /// `YYYY-MM-DD`, as on the wire.

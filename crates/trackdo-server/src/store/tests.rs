@@ -3,6 +3,8 @@ use trackdo_core::date::Date;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::note::Note;
 use trackdo_core::op::{Op, OpId, Seq};
+use trackdo_core::recurrence::{Recurrence, RecurrenceBasis};
+use trackdo_core::rrule::RRule;
 use trackdo_core::tag::{TagChange, TagColor, TagId, TagName};
 use trackdo_core::task::{TaskChange, TaskId, TaskPriority, TaskStatus};
 use trackdo_core::time_entry::{TimeEntryChange, TimeEntryId, Timestamp};
@@ -369,6 +371,36 @@ async fn reports_tag_names_not_stored_as_written() {
     assert_corrupt_after(op, "UPDATE ops SET value_text = ' a'").await;
 }
 
+fn weekly() -> TaskChange {
+    let rule = RRule::parse("FREQ=WEEKLY;BYDAY=MO,TH").unwrap();
+    let start = Date::new(2026, 11, 2).unwrap();
+    TaskChange::Recurrence(Some(
+        Recurrence::new(rule, start, RecurrenceBasis::Due).unwrap(),
+    ))
+}
+
+#[tokio::test]
+async fn reports_recurrence_rules_not_in_canonical_form() {
+    let update = "UPDATE ops SET value_text = 'FREQ=WEEKLY;BYDAY=TH,MO'";
+
+    assert_corrupt_after(task_op(1, weekly()), update).await;
+}
+
+#[tokio::test]
+async fn reports_recurrences_counted_from_completion() {
+    let update =
+        "UPDATE ops SET value_text = 'FREQ=DAILY;COUNT=3', recurrence_basis = 'completion'";
+
+    assert_corrupt_after(task_op(1, weekly()), update).await;
+}
+
+#[tokio::test]
+async fn reports_recurrence_starts_out_of_range() {
+    let update = "UPDATE ops SET recurrence_start = '0000-01-01'";
+
+    assert_corrupt_after(task_op(1, weekly()), update).await;
+}
+
 #[tokio::test]
 async fn reports_due_dates_out_of_range() {
     let due = TaskChange::Due(Some(Date::new(2024, 1, 1).unwrap()));
@@ -401,7 +433,22 @@ fn any_task_change() -> impl Strategy<Value = TaskChange> {
             tag: TagId(tag),
             tagged,
         }),
+        prop::option::of(any_recurrence()).prop_map(TaskChange::Recurrence),
     ]
+}
+
+fn any_recurrence() -> impl Strategy<Value = Recurrence> {
+    let rule = prop::sample::select(vec![
+        "FREQ=DAILY",
+        "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH",
+        "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1",
+        "FREQ=YEARLY;COUNT=3",
+    ])
+    .prop_map(|rule| RRule::parse(rule).unwrap());
+    let basis = prop::sample::select(vec![RecurrenceBasis::Due, RecurrenceBasis::Completion]);
+    (rule, any_date(), basis).prop_filter_map("COUNT from completion", |(rule, start, basis)| {
+        Recurrence::new(rule, start, basis).ok()
+    })
 }
 
 fn any_date() -> impl Strategy<Value = Date> {

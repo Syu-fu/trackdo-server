@@ -126,6 +126,23 @@ async fn sends_registers_with_their_clocks() {
 }
 
 #[tokio::test]
+async fn sends_the_recurrence_of_every_task() {
+    let (app, store) = app().await;
+    store
+        .append(
+            UserId::DEFAULT,
+            &[Op::task(OpId(1), TASK, at(20), title("a"))],
+        )
+        .await
+        .unwrap();
+
+    let reply = get_snapshot(&app).await;
+
+    let task = &reply.json()["tasks"][0];
+    assert_eq!(task.get("recurrence"), Some(&json!(null)));
+}
+
+#[tokio::test]
 async fn requires_a_token() {
     let (app, _) = app().await;
 

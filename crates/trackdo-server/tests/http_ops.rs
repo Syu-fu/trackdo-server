@@ -8,6 +8,8 @@ use trackdo_core::date::Date;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::note::{MAX_NOTE_CHARS, Note};
 use trackdo_core::op::{Op, OpId, Seq};
+use trackdo_core::recurrence::{Recurrence, RecurrenceBasis};
+use trackdo_core::rrule::RRule;
 use trackdo_core::tag::{TagChange, TagColor, TagId, TagName};
 use trackdo_core::task::{TaskChange, TaskId};
 use trackdo_core::time_entry::{TimeEntryChange, TimeEntryId};
@@ -111,6 +113,20 @@ async fn stores_task_attributes_and_tags() {
             hlc,
             TagChange::Color(Some(TagColor::Blue)),
         ),
+        Op::task(
+            OpId(6),
+            TaskId(7),
+            hlc,
+            TaskChange::Recurrence(Some(
+                Recurrence::new(
+                    RRule::parse("FREQ=WEEKLY;BYDAY=MO,TH").unwrap(),
+                    Date::new(2026, 11, 2).unwrap(),
+                    RecurrenceBasis::Completion,
+                )
+                .unwrap(),
+            )),
+        ),
+        Op::task(OpId(7), TaskId(8), hlc, TaskChange::Recurrence(None)),
     ];
 
     let reply = post_json(&app, &wire(&ops)).await;
@@ -151,7 +167,7 @@ async fn accepts_an_empty_batch() {
 async fn requires_a_token_before_reading_the_body() {
     let (app, _) = app().await;
     let request = Request::post("/ops")
-        .header("trackdo-protocol", "5")
+        .header("trackdo-protocol", "6")
         .body(Body::from("not json"))
         .unwrap();
 

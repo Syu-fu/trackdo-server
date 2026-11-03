@@ -7,8 +7,11 @@ use std::collections::BTreeMap;
 use proptest::prelude::*;
 use proptest::sample::Index;
 
+use trackdo_core::date::Date;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::op::{LogId, Op, OpId, OpTarget, Seq};
+use trackdo_core::recurrence::{Recurrence, RecurrenceBasis};
+use trackdo_core::rrule::RRule;
 use trackdo_core::tag::{Tag, TagChange, TagColor, TagId, TagName};
 use trackdo_core::task::{Task, TaskChange, TaskId, TaskStatus};
 use trackdo_core::time_entry::{TimeEntry, TimeEntryChange, TimeEntryId, Timestamp};
@@ -35,7 +38,14 @@ fn any_task_change() -> impl Strategy<Value = TaskChange> {
             tag: TagId(tag),
             tagged,
         }),
+        prop::option::of(prop::sample::select(vec!["FREQ=DAILY", "FREQ=WEEKLY"]))
+            .prop_map(|rule| TaskChange::Recurrence(rule.map(recurrence))),
     ]
+}
+
+fn recurrence(rule: &str) -> Recurrence {
+    let start = Date::new(2026, 11, 2).unwrap();
+    Recurrence::new(RRule::parse(rule).unwrap(), start, RecurrenceBasis::Due).unwrap()
 }
 
 fn any_tag_change() -> impl Strategy<Value = TagChange> {

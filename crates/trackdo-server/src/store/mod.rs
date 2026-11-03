@@ -121,7 +121,8 @@ impl Store {
         let after = after.map_or(0, |Seq(seq)| i64::try_from(seq).unwrap_or(i64::MAX));
         let rows: Vec<OpRow> = sqlx::query_as(
             "SELECT seq, op_id, hlc_wall_ms, hlc_counter, hlc_device, target, task_id, \
-                    entry_id, tag_id, field, value_text, value_int, value_id \
+                    entry_id, tag_id, field, value_text, value_int, value_id, \
+                    recurrence_start, recurrence_basis \
              FROM ops WHERE user_id = ? AND seq > ? ORDER BY seq LIMIT ?",
         )
         .bind(user.0)
@@ -160,8 +161,8 @@ async fn insert(
     let result = sqlx::query(
         "INSERT INTO ops (user_id, seq, op_id, hlc_wall_ms, hlc_counter, hlc_device, \
                           target, task_id, entry_id, tag_id, field, value_text, value_int, \
-                          value_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                          value_id, recurrence_start, recurrence_basis) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT (user_id, op_id) DO NOTHING",
     )
     .bind(user.0)
@@ -178,6 +179,8 @@ async fn insert(
     .bind(&row.value_text)
     .bind(row.value_int)
     .bind(&row.value_id)
+    .bind(&row.recurrence_start)
+    .bind(&row.recurrence_basis)
     .execute(conn)
     .await?;
     Ok(result.rows_affected() == 1)
