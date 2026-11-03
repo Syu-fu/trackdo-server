@@ -7,9 +7,11 @@ The server never holds a `Replica`; replaying the log to build a snapshot is
 its only use of domain logic (`Task::apply` / `TimeEntry::apply` /
 `Tag::apply`).
 
-The wire format is `trackdo-protocol` v0.5.0 (`PROTOCOL_VERSION = 5`).
-Subtask trees, cycle breaking and hidden deleted tags are derived on the
-clients too; the server stores and replays task, time entry and tag ops alike.
+The wire format is `trackdo-protocol` v0.6.0 (`PROTOCOL_VERSION = 6`).
+Subtask trees, cycle breaking, hidden deleted tags and the next occurrence of
+a recurring task are derived on the clients too; the server stores and replays
+task, time entry and tag ops alike. Completing a recurring task arrives as
+ordinary `due`, `scheduled_at` and `status` writes.
 
 ## Authentication
 
@@ -26,10 +28,10 @@ clients too; the server stores and replays task, time entry and tag ops alike.
 
 ## Protocol version
 
-- Authenticated requests must send `Trackdo-Protocol: 5`. A missing or
+- Authenticated requests must send `Trackdo-Protocol: 6`. A missing or
   different value is rejected with `400 unsupported_protocol_version`.
   Authentication is checked first.
-- Every response carries `Trackdo-Protocol: 5`, so a client can tell whether
+- Every response carries `Trackdo-Protocol: 6`, so a client can tell whether
   the app or the server needs updating.
 - Only an exact match is accepted.
 
@@ -76,7 +78,7 @@ the log they know; a position in another log is refused, so they resync.
 
 ### `GET /healthz`
 
-Unauthenticated. Returns `{"status":"ok","protocol_version":5}` so apps can
+Unauthenticated. Returns `{"status":"ok","protocol_version":6}` so apps can
 check the URL and compatibility before asking for a token.
 
 ### `POST /ops`
@@ -145,9 +147,11 @@ CREATE TABLE ops (
   tag_id      BLOB,               -- tag ops, and the tag of a task 'tag' op
   field       TEXT    NOT NULL,
   value_text  TEXT,               -- title, status, priority, note, due, tag name,
-                                  -- tag color; NULL due/color = cleared
+                                  -- tag color, recurrence rule; NULL = cleared
   value_int   INTEGER,            -- times in ms, flags as 0/1; NULL stop = running
   value_id    BLOB,               -- parent; NULL = top level
+  recurrence_start TEXT,          -- a recurrence's first occurrence, YYYY-MM-DD
+  recurrence_basis TEXT,          -- 'due' | 'completion'
   PRIMARY KEY (user_id, seq),
   UNIQUE (user_id, op_id),
   CHECK (...)                     -- which id and value columns each target/field uses
@@ -162,15 +166,17 @@ CREATE INDEX ops_entry ON ops (user_id, entry_id, seq) WHERE entry_id IS NOT NUL
   `ops_entry`. Mismatches within a single batch are rejected too.
 - `u64` values (HLC wall time, timestamps) are bit-cast to `i64`, which is
   lossless; SQL never orders by them. Due dates are stored as `YYYY-MM-DD`,
-  tag colors by their wire name (`red`, ..., `gray`).
+  tag colors by their wire name (`red`, ..., `gray`). A recurrence keeps its
+  rule in canonical form in `value_text`; stopping it leaves all three
+  columns `NULL`.
 - The `CHECK` treats a `NULL` result as a failure, so a missing value never
   slips through a comparison.
 - Rows are decoded back through the core types (`Title`, `Note`, `TagName`,
-  `Date`), and a stored value those would change is reported as corrupt
-  rather than served.
-- Migrations `0002` (trackdo-core v0.4.0) and `0003` (v0.5.0, tag colors)
-  each rebuilt `ops`, since SQLite cannot change a `CHECK` in place, and
-  copied every existing row unchanged. A build script rebuilds the server
+  `Date`, `Recurrence`), and a stored value those would change is reported as
+  corrupt rather than served.
+- Migrations `0002` (trackdo-core v0.4.0), `0003` (v0.5.0, tag colors) and
+  `0004` (v0.6.0, recurrences) each rebuilt `ops`, since SQLite cannot change
+  a `CHECK` in place, and copied every existing row unchanged. A build script rebuilds the server
   when a migration changes, as `sqlx::migrate!` embeds them.
 
 ### Not done (yet)
