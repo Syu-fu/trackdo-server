@@ -22,6 +22,8 @@ struct Row {
     value_text: Option<&'static str>,
     value_int: Option<i64>,
     value_id: bool,
+    /// `recurrence_start` and `recurrence_basis`.
+    recurrence: Option<(&'static str, &'static str)>,
 }
 
 const fn task(
@@ -38,6 +40,7 @@ const fn task(
         value_text,
         value_int,
         value_id: false,
+        recurrence: None,
     }
 }
 
@@ -102,28 +105,37 @@ async fn insert_v1(pool: &SqlitePool, seq: i64, row: Row) {
     .unwrap();
 }
 
+/// A row without a recurrence leaves its columns out, so it fits databases
+/// from before they were added too.
 async fn insert(pool: &SqlitePool, seq: i64, row: Row) -> Result<(), sqlx::Error> {
     let id = |present: bool| present.then(|| ID.to_vec());
-    sqlx::query(
+    let (columns, values) = match row.recurrence {
+        Some(_) => (", recurrence_start, recurrence_basis", ", ?, ?"),
+        None => ("", ""),
+    };
+    let sql = format!(
         "INSERT INTO ops (user_id, seq, op_id, hlc_wall_ms, hlc_counter, hlc_device, \
                           target, task_id, entry_id, tag_id, field, value_text, value_int, \
-                          value_id) \
-         VALUES (1, ?, ?, 1000, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind(seq)
-    .bind(op_id(seq))
-    .bind(ID.to_vec())
-    .bind(row.target)
-    .bind(id(row.task_id))
-    .bind(id(row.entry_id))
-    .bind(id(row.tag_id))
-    .bind(row.field)
-    .bind(row.value_text)
-    .bind(row.value_int)
-    .bind(id(row.value_id))
-    .execute(pool)
-    .await
-    .map(|_| ())
+                          value_id{columns}) \
+         VALUES (1, ?, ?, 1000, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?{values})"
+    );
+    let query = sqlx::query(&sql)
+        .bind(seq)
+        .bind(op_id(seq))
+        .bind(ID.to_vec())
+        .bind(row.target)
+        .bind(id(row.task_id))
+        .bind(id(row.entry_id))
+        .bind(id(row.tag_id))
+        .bind(row.field)
+        .bind(row.value_text)
+        .bind(row.value_int)
+        .bind(id(row.value_id));
+    let query = match row.recurrence {
+        Some((start, basis)) => query.bind(start).bind(basis),
+        None => query,
+    };
+    query.execute(pool).await.map(|_| ())
 }
 
 fn op_id(seq: i64) -> Vec<u8> {
@@ -202,8 +214,17 @@ const fn without_task(row: Row) -> Row {
     }
 }
 
+const fn recurring(row: Row, start: &'static str, basis: &'static str) -> Row {
+    Row {
+        recurrence: Some((start, basis)),
+        ..row
+    }
+}
+
+const WEEKLY: Option<&str> = Some("FREQ=WEEKLY;BYDAY=MO,TH");
+
 /// Every shape a valid op is stored as.
-const ACCEPTED: [Row; 32] = [
+const ACCEPTED: [Row; 35] = [
     V1_ROWS[0],
     V1_ROWS[1],
     V1_ROWS[2],
@@ -236,9 +257,12 @@ const ACCEPTED: [Row; 32] = [
     tag("color", Some("pink"), None),
     tag("color", Some("gray"), None),
     tag("color", None, None),
+    recurring(task("recurrence", WEEKLY, None), "2026-11-02", "due"),
+    recurring(task("recurrence", WEEKLY, None), "2026-11-02", "completion"),
+    task("recurrence", None, None),
 ];
 
-const REJECTED: [Row; 21] = [
+const REJECTED: [Row; 29] = [
     without_task(task("title", Some("a"), None)),
     with_tag(task("title", Some("a"), None)),
     with_value_id(task("title", Some("a"), None)),
@@ -263,9 +287,18 @@ const REJECTED: [Row; 21] = [
     tag("color", Some("teal"), None),
     tag("color", Some("Red"), None),
     tag("color", None, Some(0)),
+    task("recurrence", WEEKLY, None),
+    recurring(task("recurrence", None, None), "2026-11-02", "due"),
+    recurring(task("recurrence", WEEKLY, None), "2026-02-30", "due"),
+    recurring(task("recurrence", WEEKLY, None), "2026-11-02", "weekly"),
+    recurring(task("recurrence", WEEKLY, Some(1)), "2026-11-02", "due"),
+    recurring(task("title", Some("a"), None), "2026-11-02", "due"),
+    recurring(entry("started_at", Some(5)), "2026-11-02", "due"),
+    recurring(tag("name", Some("work"), None), "2026-11-02", "due"),
 ];
 
-/// Every row with every column as an SQL literal, in seq order.
+/// Every row with the columns all versions have, as SQL literals, in seq
+/// order.
 async fn dump(pool: &SqlitePool) -> Vec<String> {
     let columns = [
         "user_id",
@@ -291,11 +324,11 @@ async fn dump(pool: &SqlitePool) -> Vec<String> {
         .unwrap()
 }
 
-#[tokio::test]
-async fn keeps_the_ops_stored_by_v0_3() {
-    let pool = pool_at(2).await;
-    let v0_3_rows = &ACCEPTED[..23];
-    for (seq, row) in (1..).zip(v0_3_rows) {
+/// Rows stored with the migrations up to `version` read the same after the
+/// rest.
+async fn assert_rows_kept_from(version: i64, rows: &[Row]) {
+    let pool = pool_at(version).await;
+    for (seq, row) in (1..).zip(rows) {
         insert(&pool, seq, *row).await.unwrap();
     }
     let before = dump(&pool).await;
@@ -303,6 +336,16 @@ async fn keeps_the_ops_stored_by_v0_3() {
     sqlx::migrate!().run(&pool).await.unwrap();
 
     assert_eq!(dump(&pool).await, before);
+}
+
+#[tokio::test]
+async fn keeps_the_ops_stored_by_v0_3() {
+    assert_rows_kept_from(2, &ACCEPTED[..23]).await;
+}
+
+#[tokio::test]
+async fn keeps_the_ops_stored_by_v0_4() {
+    assert_rows_kept_from(3, &ACCEPTED[..32]).await;
 }
 
 #[tokio::test]
