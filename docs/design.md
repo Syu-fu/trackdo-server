@@ -7,11 +7,12 @@ The server never holds a `Replica`; replaying the log to build a snapshot is
 its only use of domain logic (`Task::apply` / `TimeEntry::apply` /
 `Tag::apply`).
 
-The wire format is `trackdo-protocol` v0.6.0 (`PROTOCOL_VERSION = 6`).
-Subtask trees, cycle breaking, hidden deleted tags and the next occurrence of
-a recurring task are derived on the clients too; the server stores and replays
-task, time entry and tag ops alike. Completing a recurring task arrives as
-ordinary `due`, `scheduled_at` and `status` writes.
+The wire format is `trackdo-protocol` v0.7.0 (`PROTOCOL_VERSION = 7`).
+Subtask trees, cycle breaking, hidden deleted tags, the next occurrence of a
+recurring task and the time spent per occurrence are derived on the clients
+too; the server stores and replays task, time entry and tag ops alike.
+Completing a recurring task arrives as ordinary `due`, `scheduled_at`,
+`status` and `occurrence_start` writes.
 
 ## Authentication
 
@@ -28,10 +29,10 @@ ordinary `due`, `scheduled_at` and `status` writes.
 
 ## Protocol version
 
-- Authenticated requests must send `Trackdo-Protocol: 6`. A missing or
+- Authenticated requests must send `Trackdo-Protocol: 7`. A missing or
   different value is rejected with `400 unsupported_protocol_version`.
   Authentication is checked first.
-- Every response carries `Trackdo-Protocol: 6`, so a client can tell whether
+- Every response carries `Trackdo-Protocol: 7`, so a client can tell whether
   the app or the server needs updating.
 - Only an exact match is accepted.
 
@@ -78,7 +79,7 @@ the log they know; a position in another log is refused, so they resync.
 
 ### `GET /healthz`
 
-Unauthenticated. Returns `{"status":"ok","protocol_version":6}` so apps can
+Unauthenticated. Returns `{"status":"ok","protocol_version":7}` so apps can
 check the URL and compatibility before asking for a token.
 
 ### `POST /ops`
@@ -148,7 +149,8 @@ CREATE TABLE ops (
   field       TEXT    NOT NULL,
   value_text  TEXT,               -- title, status, priority, note, due, tag name,
                                   -- tag color, recurrence rule; NULL = cleared
-  value_int   INTEGER,            -- times in ms, flags as 0/1; NULL stop = running
+  value_int   INTEGER,            -- times in ms, estimates in minutes, flags as 0/1;
+                                  -- NULL stop = running, NULL estimate = cleared
   value_id    BLOB,               -- parent; NULL = top level
   recurrence_start TEXT,          -- a recurrence's first occurrence, YYYY-MM-DD
   recurrence_basis TEXT,          -- 'due' | 'completion'
@@ -165,18 +167,20 @@ CREATE INDEX ops_entry ON ops (user_id, entry_id, seq) WHERE entry_id IS NOT NUL
 - An entry's task is the `task_id` of its first stored op, looked up through
   `ops_entry`. Mismatches within a single batch are rejected too.
 - `u64` values (HLC wall time, timestamps) are bit-cast to `i64`, which is
-  lossless; SQL never orders by them. Due dates are stored as `YYYY-MM-DD`,
+  lossless; SQL never orders by them. Occurrence starts are such timestamps,
+  and estimates whole minutes from 1 to 60,000. Due dates are stored as `YYYY-MM-DD`,
   tag colors by their wire name (`red`, ..., `gray`). A recurrence keeps its
   rule in canonical form in `value_text`; stopping it leaves all three
   columns `NULL`.
 - The `CHECK` treats a `NULL` result as a failure, so a missing value never
   slips through a comparison.
 - Rows are decoded back through the core types (`Title`, `Note`, `TagName`,
-  `Date`, `Recurrence`), and a stored value those would change is reported as
+  `Date`, `Recurrence`, `Estimate`), and a stored value those would change is reported as
   corrupt rather than served.
-- Migrations `0002` (trackdo-core v0.4.0), `0003` (v0.5.0, tag colors) and
-  `0004` (v0.6.0, recurrences) each rebuilt `ops`, since SQLite cannot change
-  a `CHECK` in place, and copied every existing row unchanged. A build script rebuilds the server
+- Migrations `0002` (trackdo-core v0.4.0), `0003` (v0.5.0, tag colors),
+  `0004` (v0.6.0, recurrences) and `0005` (v0.7.0, estimates and occurrence
+  starts) each rebuilt `ops`, since SQLite cannot change a `CHECK` in place,
+  and copied every existing row unchanged. A build script rebuilds the server
   when a migration changes, as `sqlx::migrate!` embeds them.
 
 ### Not done (yet)
