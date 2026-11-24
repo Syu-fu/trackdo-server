@@ -126,7 +126,7 @@ async fn sends_registers_with_their_clocks() {
 }
 
 #[tokio::test]
-async fn sends_the_recurrence_of_every_task() {
+async fn sends_the_recurrence_estimate_and_occurrence_start_of_every_task() {
     let (app, store) = app().await;
     store
         .append(
@@ -140,6 +140,8 @@ async fn sends_the_recurrence_of_every_task() {
 
     let task = &reply.json()["tasks"][0];
     assert_eq!(task.get("recurrence"), Some(&json!(null)));
+    assert_eq!(task.get("estimate"), Some(&json!(null)));
+    assert_eq!(task.get("occurrence_start"), Some(&json!(null)));
 }
 
 #[tokio::test]

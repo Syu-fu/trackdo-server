@@ -1,6 +1,7 @@
 //! Mapping between [`Op`] and rows of the `ops` table.
 
 use trackdo_core::date::Date;
+use trackdo_core::estimate::Estimate;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::note::Note;
 use trackdo_core::op::{Op, OpId, OpTarget, Seq};
@@ -202,6 +203,13 @@ fn task_value(change: &TaskChange) -> (&'static str, Value) {
                 .as_ref()
                 .map_or_else(Value::default, Value::recurrence),
         ),
+        TaskChange::Estimate(estimate) => (
+            "estimate",
+            Value::int(estimate.map(|estimate| i64::from(estimate.minutes()))),
+        ),
+        TaskChange::OccurrenceStart(Timestamp(start)) => {
+            ("occurrence_start", Value::int(Some(to_i64(*start))))
+        }
     }
 }
 
@@ -267,6 +275,10 @@ fn task_change(field: &str, tag: Option<TagId>, value: Value) -> Option<TaskChan
             scheduled.map(|scheduled| Timestamp(to_u64(scheduled))),
         )),
         ("parent", None, None, None, parent) => Some(TaskChange::Parent(parent.map(TaskId))),
+        ("estimate", None, None, minutes, None) => estimate_from(minutes).map(TaskChange::Estimate),
+        ("occurrence_start", None, None, Some(start), None) => {
+            Some(TaskChange::OccurrenceStart(Timestamp(to_u64(start))))
+        }
         ("tag", Some(tag), None, Some(tagged), None) => {
             flag(tagged).map(|tagged| TaskChange::Tag { tag, tagged })
         }
@@ -340,6 +352,14 @@ fn recurrence_from(
     };
     let recurrence = Recurrence::try_from(dto.clone()).ok()?;
     (RecurrenceDto::from(&recurrence) == dto).then_some(Some(recurrence))
+}
+
+/// `Some(None)` for NULL, `None` for minutes no estimate has.
+fn estimate_from(minutes: Option<i64>) -> Option<Option<Estimate>> {
+    minutes.map_or(Some(None), |minutes| {
+        let minutes = u32::try_from(minutes).ok()?;
+        Estimate::from_minutes(minutes).ok().map(Some)
+    })
 }
 
 /// Builds a value from stored text, only if building it keeps the text as

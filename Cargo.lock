@@ -1856,8 +1856,8 @@ dependencies = [
 
 [[package]]
 name = "trackdo-core"
-version = "0.6.0"
-source = "git+https://github.com/Syu-fu/trackdo-core?tag=v0.6.0#873c18dde4f5f3939f9dd41eb3876f4fd67d03e7"
+version = "0.7.0"
+source = "git+https://github.com/Syu-fu/trackdo-core?tag=v0.7.0#2865ca43899987535c5445165de132e01a576f7d"
 dependencies = [
  "thiserror",
  "uuid",
@@ -1865,8 +1865,8 @@ dependencies = [
 
 [[package]]
 name = "trackdo-protocol"
-version = "0.6.0"
-source = "git+https://github.com/Syu-fu/trackdo-core?tag=v0.6.0#873c18dde4f5f3939f9dd41eb3876f4fd67d03e7"
+version = "0.7.0"
+source = "git+https://github.com/Syu-fu/trackdo-core?tag=v0.7.0#2865ca43899987535c5445165de132e01a576f7d"
 dependencies = [
  "serde",
  "thiserror",

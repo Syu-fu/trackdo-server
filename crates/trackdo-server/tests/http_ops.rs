@@ -5,6 +5,7 @@ use axum::http::{Request, StatusCode};
 use serde_json::{Value, json};
 
 use trackdo_core::date::Date;
+use trackdo_core::estimate::Estimate;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::note::{MAX_NOTE_CHARS, Note};
 use trackdo_core::op::{Op, OpId, Seq};
@@ -12,7 +13,7 @@ use trackdo_core::recurrence::{Recurrence, RecurrenceBasis};
 use trackdo_core::rrule::RRule;
 use trackdo_core::tag::{TagChange, TagColor, TagId, TagName};
 use trackdo_core::task::{TaskChange, TaskId};
-use trackdo_core::time_entry::{TimeEntryChange, TimeEntryId};
+use trackdo_core::time_entry::{TimeEntryChange, TimeEntryId, Timestamp};
 use trackdo_core::title::Title;
 use trackdo_protocol::op::OpDto;
 use trackdo_server::store::{Store, UserId};
@@ -127,6 +128,19 @@ async fn stores_task_attributes_and_tags() {
             )),
         ),
         Op::task(OpId(7), TaskId(8), hlc, TaskChange::Recurrence(None)),
+        Op::task(
+            OpId(8),
+            TaskId(7),
+            hlc,
+            TaskChange::Estimate(Some(Estimate::from_minutes(90).unwrap())),
+        ),
+        Op::task(OpId(9), TaskId(8), hlc, TaskChange::Estimate(None)),
+        Op::task(
+            OpId(10),
+            TaskId(7),
+            hlc,
+            TaskChange::OccurrenceStart(Timestamp(1_730_100_000_000)),
+        ),
     ];
 
     let reply = post_json(&app, &wire(&ops)).await;
@@ -167,7 +181,7 @@ async fn accepts_an_empty_batch() {
 async fn requires_a_token_before_reading_the_body() {
     let (app, _) = app().await;
     let request = Request::post("/ops")
-        .header("trackdo-protocol", "6")
+        .header("trackdo-protocol", "7")
         .body(Body::from("not json"))
         .unwrap();
 

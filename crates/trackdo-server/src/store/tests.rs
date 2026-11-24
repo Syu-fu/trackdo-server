@@ -1,5 +1,6 @@
 use proptest::prelude::*;
 use trackdo_core::date::Date;
+use trackdo_core::estimate::{Estimate, MAX_ESTIMATE_MINUTES};
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::note::Note;
 use trackdo_core::op::{Op, OpId, Seq};
@@ -401,6 +402,25 @@ async fn reports_recurrence_starts_out_of_range() {
     assert_corrupt_after(task_op(1, weekly()), update).await;
 }
 
+/// The `CHECK` keeps such estimates out, so they are written past it.
+async fn assert_estimate_corrupt(minutes: i64) {
+    let estimate = TaskChange::Estimate(Some(Estimate::from_minutes(90).unwrap()));
+    let update =
+        format!("PRAGMA ignore_check_constraints = ON; UPDATE ops SET value_int = {minutes}");
+
+    assert_corrupt_after(task_op(1, estimate), &update).await;
+}
+
+#[tokio::test]
+async fn reports_estimates_of_no_minutes() {
+    assert_estimate_corrupt(0).await;
+}
+
+#[tokio::test]
+async fn reports_estimates_over_the_maximum() {
+    assert_estimate_corrupt(60_001).await;
+}
+
 #[tokio::test]
 async fn reports_due_dates_out_of_range() {
     let due = TaskChange::Due(Some(Date::new(2024, 1, 1).unwrap()));
@@ -434,6 +454,11 @@ fn any_task_change() -> impl Strategy<Value = TaskChange> {
             tagged,
         }),
         prop::option::of(any_recurrence()).prop_map(TaskChange::Recurrence),
+        prop::option::of(
+            (1..=MAX_ESTIMATE_MINUTES).prop_map(|minutes| Estimate::from_minutes(minutes).unwrap())
+        )
+        .prop_map(TaskChange::Estimate),
+        any::<u64>().prop_map(|start| TaskChange::OccurrenceStart(Timestamp(start))),
     ]
 }
 

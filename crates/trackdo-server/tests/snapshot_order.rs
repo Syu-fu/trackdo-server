@@ -8,6 +8,7 @@ use proptest::prelude::*;
 use proptest::sample::Index;
 
 use trackdo_core::date::Date;
+use trackdo_core::estimate::Estimate;
 use trackdo_core::hlc::{DeviceId, Hlc};
 use trackdo_core::op::{LogId, Op, OpId, OpTarget, Seq};
 use trackdo_core::recurrence::{Recurrence, RecurrenceBasis};
@@ -40,12 +41,19 @@ fn any_task_change() -> impl Strategy<Value = TaskChange> {
         }),
         prop::option::of(prop::sample::select(vec!["FREQ=DAILY", "FREQ=WEEKLY"]))
             .prop_map(|rule| TaskChange::Recurrence(rule.map(recurrence))),
+        prop::option::of(prop::sample::select(vec![30, 90]))
+            .prop_map(|minutes| TaskChange::Estimate(minutes.map(estimate))),
+        (0u64..2).prop_map(|start| TaskChange::OccurrenceStart(Timestamp(start))),
     ]
 }
 
 fn recurrence(rule: &str) -> Recurrence {
     let start = Date::new(2026, 11, 2).unwrap();
     Recurrence::new(RRule::parse(rule).unwrap(), start, RecurrenceBasis::Due).unwrap()
+}
+
+fn estimate(minutes: u32) -> Estimate {
+    Estimate::from_minutes(minutes).unwrap()
 }
 
 fn any_tag_change() -> impl Strategy<Value = TagChange> {
