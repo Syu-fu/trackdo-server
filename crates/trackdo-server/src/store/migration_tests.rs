@@ -224,7 +224,7 @@ const fn recurring(row: Row, start: &'static str, basis: &'static str) -> Row {
 const WEEKLY: Option<&str> = Some("FREQ=WEEKLY;BYDAY=MO,TH");
 
 /// Every shape a valid op is stored as.
-const ACCEPTED: [Row; 35] = [
+const ACCEPTED: [Row; 40] = [
     V1_ROWS[0],
     V1_ROWS[1],
     V1_ROWS[2],
@@ -260,9 +260,14 @@ const ACCEPTED: [Row; 35] = [
     recurring(task("recurrence", WEEKLY, None), "2026-11-02", "due"),
     recurring(task("recurrence", WEEKLY, None), "2026-11-02", "completion"),
     task("recurrence", None, None),
+    task("estimate", None, Some(1)),
+    task("estimate", None, Some(60_000)),
+    task("estimate", None, None),
+    task("occurrence_start", None, Some(1_730_100_000_000)),
+    task("occurrence_start", None, Some(-1)),
 ];
 
-const REJECTED: [Row; 29] = [
+const REJECTED: [Row; 35] = [
     without_task(task("title", Some("a"), None)),
     with_tag(task("title", Some("a"), None)),
     with_value_id(task("title", Some("a"), None)),
@@ -295,29 +300,29 @@ const REJECTED: [Row; 29] = [
     recurring(task("title", Some("a"), None), "2026-11-02", "due"),
     recurring(entry("started_at", Some(5)), "2026-11-02", "due"),
     recurring(tag("name", Some("work"), None), "2026-11-02", "due"),
+    task("estimate", None, Some(0)),
+    task("estimate", None, Some(60_001)),
+    task("estimate", Some("90"), None),
+    recurring(task("estimate", None, Some(90)), "2026-11-02", "due"),
+    task("occurrence_start", None, None),
+    task("occurrence_start", Some("5"), Some(5)),
 ];
 
-/// Every row with the columns all versions have, as SQL literals, in seq
-/// order.
-async fn dump(pool: &SqlitePool) -> Vec<String> {
-    let columns = [
-        "user_id",
-        "seq",
-        "op_id",
-        "hlc_wall_ms",
-        "hlc_counter",
-        "hlc_device",
-        "target",
-        "task_id",
-        "entry_id",
-        "tag_id",
-        "field",
-        "value_text",
-        "value_int",
-        "value_id",
-    ]
-    .map(|column| format!("quote({column})"))
-    .join(" || ',' || ");
+/// The columns of `ops`, in table order.
+async fn columns(pool: &SqlitePool) -> Vec<String> {
+    sqlx::query_scalar("SELECT name FROM pragma_table_info('ops') ORDER BY cid")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// Every row by `columns`, as SQL literals, in seq order.
+async fn dump(pool: &SqlitePool, columns: &[String]) -> Vec<String> {
+    let columns = columns
+        .iter()
+        .map(|column| format!("quote({column})"))
+        .collect::<Vec<_>>()
+        .join(" || ',' || ");
     sqlx::query_scalar(&format!("SELECT {columns} FROM ops ORDER BY user_id, seq"))
         .fetch_all(pool)
         .await
@@ -325,17 +330,18 @@ async fn dump(pool: &SqlitePool) -> Vec<String> {
 }
 
 /// Rows stored with the migrations up to `version` read the same after the
-/// rest.
+/// rest, in every column they had.
 async fn assert_rows_kept_from(version: i64, rows: &[Row]) {
     let pool = pool_at(version).await;
     for (seq, row) in (1..).zip(rows) {
         insert(&pool, seq, *row).await.unwrap();
     }
-    let before = dump(&pool).await;
+    let columns = columns(&pool).await;
+    let before = dump(&pool, &columns).await;
 
     sqlx::migrate!().run(&pool).await.unwrap();
 
-    assert_eq!(dump(&pool).await, before);
+    assert_eq!(dump(&pool, &columns).await, before);
 }
 
 #[tokio::test]
@@ -346,6 +352,11 @@ async fn keeps_the_ops_stored_by_v0_3() {
 #[tokio::test]
 async fn keeps_the_ops_stored_by_v0_4() {
     assert_rows_kept_from(3, &ACCEPTED[..32]).await;
+}
+
+#[tokio::test]
+async fn keeps_the_ops_stored_by_v0_5() {
+    assert_rows_kept_from(4, &ACCEPTED[..35]).await;
 }
 
 #[tokio::test]
